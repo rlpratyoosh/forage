@@ -64,6 +64,36 @@ impl PheromonePool {
             active_chunks: Vec::with_capacity(no_of_chunks),
         }
     }
+
+    pub fn evaporate(&mut self, evaporation_strength: f32, map_width: usize, no_of_chunks: usize) {
+        let chunks_per_side = no_of_chunks.isqrt();
+
+        self.active_chunks.retain(|&chunk_id| {
+            let chunk_r = chunk_id / chunks_per_side;
+            let chunk_c = chunk_id % chunks_per_side;
+            let world_r = chunk_r * 32;
+            let world_c = chunk_c * 32;
+            let world_idx = world_r * map_width + world_c;
+
+            let mut chunk_is_empty = true;
+            for r in 0..32 {
+                let row_idx = world_idx + r * map_width;
+                for c in 0..32 {
+                    let idx = row_idx + c;
+                    if self.strength[idx] > 0.0 {
+                        self.strength[idx] *= evaporation_strength;
+                        if self.strength[idx] > 0.01 {
+                            chunk_is_empty = false;
+                        } else {
+                            self.strength[idx] = 0.0;
+                        }
+                    }
+                }
+            }
+
+            !chunk_is_empty
+        });
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -189,5 +219,10 @@ mod tests {
         assert_eq!(ant_pool.nest_ids, vec![0, 1, 2, 3]);
         assert_eq!(ant_pool.pos, nest_pool.pos);
         assert_eq!(nest_pool.pos[ant_pool.nest_ids[0] as usize], ant_pool.pos[0]);
+    }
+
+    #[test]
+    fn pheromone_pool() {
+        let pheromone_pool = PheromonePool::new(4096);
     }
 }
