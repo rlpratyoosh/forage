@@ -66,6 +66,7 @@ impl PheromonePool {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct NestPool {
     pos: Vec<usize>,
     player_ids: Vec<u32>,
@@ -73,12 +74,13 @@ pub struct NestPool {
 }
 
 impl NestPool {
-    pub fn new(player_count: usize, map_area: usize) -> Self {
+    pub fn new(player_count: usize, map_area: usize, chunks_per_player: u16) -> Self {
         let mut pos = Vec::with_capacity(player_count);
         let width = map_area.isqrt();
+        let steps = (chunks_per_player.isqrt() * 32) as usize;
 
-        for r in (0..width).step_by(32) {
-            for c in (0..width).step_by(32) {
+        for r in (0..width).step_by(steps) {
+            for c in (0..width).step_by(steps) {
                 let idx = r * width + c;
                 pos.push(idx);
             }
@@ -115,7 +117,11 @@ impl Settings {
         let width = (required_area.sqrt() as usize).next_power_of_two();
         let map_area = width * width;
         let no_of_chunks = (map_area / 1024) as u32;
-        let chunks_per_player = prev_power_of_two((no_of_chunks as usize / player_count).isqrt()).pow(2) as u16;
+        let mut rough_chunks_per_player = no_of_chunks as usize / player_count;
+        if rough_chunks_per_player == 0 {
+            rough_chunks_per_player = 1;
+        }
+        let chunks_per_player = prev_power_of_two(rough_chunks_per_player.isqrt()).pow(2) as u16;
         let player_count = no_of_chunks / chunks_per_player as u32;
 
         Self {
@@ -142,7 +148,7 @@ impl World {
             ant_pool: AntPool::new(settings.player_count as usize, settings.ants_per_nest as usize),
             food_pool: FoodPool::new(settings.map_area),
             pheromone_pool: PheromonePool::new(settings.map_area),
-            nest_pool: NestPool::new(settings.player_count as usize, settings.map_area as usize),
+            nest_pool: NestPool::new(settings.player_count as usize, settings.map_area as usize, settings.chunks_per_player),
             settings,
         }
     }
@@ -160,5 +166,14 @@ mod tests {
         assert_eq!(settings, Settings { player_count: 4096, ants_per_nest: 1000, map_area: 67_108_864, no_of_chunks: 65_536, chunks_per_player: 16 } );
         let settings = Settings::new(1000, 500, 0.05);
         assert_eq!(settings, Settings { player_count: 1024, ants_per_nest: 500, map_area: 16_777_216, no_of_chunks: 16_384, chunks_per_player: 16 } );
+    }
+
+    #[test]
+    fn nest_pool() {
+        let nest_pool = NestPool::new(4, 4096, 1);
+        assert_eq!(nest_pool.pos.len(), 4);
+        assert_eq!(nest_pool.pos, vec![0, 32, 2048, 2080]);
+        assert_eq!(nest_pool.player_ids, vec![0; 4]);
+        assert_eq!(nest_pool.cursor, 0);
     }
 }
