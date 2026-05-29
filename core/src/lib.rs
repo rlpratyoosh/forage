@@ -1,8 +1,10 @@
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AntState {
     Searching,
     Returning,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct AntPool {
     pos: Vec<usize>,
     state: Vec<AntState>,
@@ -10,24 +12,22 @@ pub struct AntPool {
 }
 
 impl AntPool {
-    pub fn new(player_count: usize, ants_per_nest: usize) -> Self {
+    pub fn new(player_count: usize, ants_per_nest: usize, nest_pos: &Vec<usize>) -> Self {
         let capacity = player_count * ants_per_nest;
 
         let mut pos = Vec::with_capacity(capacity);
         let mut state = Vec::with_capacity(capacity);
         let mut nest_ids = Vec::with_capacity(capacity);
 
-        let mut cur_nest_id = 0;
-        let mut cur_pos = 0;
+        let mut i = 0;
 
         for _ in (0..capacity).step_by(ants_per_nest) {
             for _ in 0..ants_per_nest {
-                pos.push(cur_pos);
+                pos.push(nest_pos[i]);
                 state.push(AntState::Searching);
-                nest_ids.push(cur_nest_id);
+                nest_ids.push(i as u32);
             }
-            cur_nest_id += 1;
-            cur_pos += 1;
+            i += 1;
         }
 
         Self {
@@ -144,11 +144,13 @@ pub struct World {
 
 impl World {
     pub fn new(settings: Settings) -> Self {
+        let nest_pool = NestPool::new(settings.player_count as usize, settings.map_area as usize, settings.chunks_per_player);
+
         Self {
-            ant_pool: AntPool::new(settings.player_count as usize, settings.ants_per_nest as usize),
+            ant_pool: AntPool::new(settings.player_count as usize, settings.ants_per_nest as usize, &nest_pool.pos),
             food_pool: FoodPool::new(settings.map_area),
             pheromone_pool: PheromonePool::new(settings.map_area),
-            nest_pool: NestPool::new(settings.player_count as usize, settings.map_area as usize, settings.chunks_per_player),
+            nest_pool,
             settings,
         }
     }
@@ -175,5 +177,17 @@ mod tests {
         assert_eq!(nest_pool.pos, vec![0, 32, 2048, 2080]);
         assert_eq!(nest_pool.player_ids, vec![0; 4]);
         assert_eq!(nest_pool.cursor, 0);
+    }
+
+    #[test]
+    fn ant_pool() {
+        let ant_pool = AntPool::new(4, 1, &vec![0, 32, 2048, 2080]);
+        let nest_pool = NestPool::new(4, 4096, 1);
+        assert_eq!(ant_pool.pos.len(), 4);
+        assert_eq!(ant_pool.pos, vec![0, 32, 2048, 2080]);
+        assert_eq!(ant_pool.state, vec![AntState::Searching; 4]);
+        assert_eq!(ant_pool.nest_ids, vec![0, 1, 2, 3]);
+        assert_eq!(ant_pool.pos, nest_pool.pos);
+        assert_eq!(nest_pool.pos[ant_pool.nest_ids[0] as usize], ant_pool.pos[0]);
     }
 }
