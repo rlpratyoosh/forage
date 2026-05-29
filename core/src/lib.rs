@@ -12,7 +12,7 @@ pub struct AntPool {
 }
 
 impl AntPool {
-    pub fn new(player_count: usize, ants_per_nest: usize, nest_pos: &Vec<usize>) -> Self {
+    pub fn new(player_count: usize, ants_per_nest: usize, nest_pos: &[usize]) -> Self {
         let capacity = player_count * ants_per_nest;
 
         let mut pos = Vec::with_capacity(capacity);
