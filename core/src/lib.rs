@@ -1,13 +1,9 @@
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum AntState {
-    Searching,
-    Returning,
-}
+use fastrand::Rng;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct AntPool {
     pos: Vec<usize>,
-    state: Vec<AntState>,
+    state: Vec<u8>,
     nest_ids: Vec<u32>,
 }
 
@@ -16,7 +12,6 @@ impl AntPool {
         let capacity = player_count * ants_per_nest;
 
         let mut pos = Vec::with_capacity(capacity);
-        let mut state = Vec::with_capacity(capacity);
         let mut nest_ids = Vec::with_capacity(capacity);
 
         let mut i = 0;
@@ -24,7 +19,6 @@ impl AntPool {
         for _ in (0..capacity).step_by(ants_per_nest) {
             for _ in 0..ants_per_nest {
                 pos.push(nest_pos[i]);
-                state.push(AntState::Searching);
                 nest_ids.push(i as u32);
             }
             i += 1;
@@ -32,8 +26,79 @@ impl AntPool {
 
         Self {
             pos,
-            state,
+            state: vec![0; capacity],
             nest_ids,
+        }
+    }
+
+    pub fn move_ants(&mut self, pheromone_strengths: &[f32], map_width: usize, nest_positions: &[usize]) {
+        let mask = map_width -1;
+        let shift = map_width.trailing_zeros();
+
+        let directions = [(0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)];
+        let mut random_generator = Rng::new();
+
+        for i in 0..self.pos.len() {
+            let current_pos = self.pos[i];
+            let current_state = self.state[i];
+            let mut chosen_pos;
+
+            let r = current_pos >> shift;
+            let c = current_pos & mask;
+
+            if current_state == 0 {
+                let mut neighbors = [0usize; 8];
+                let mut valid_count = 0;
+
+                for (row_step, col_step) in directions.iter() {
+                    let new_r = r as isize + row_step;
+                    let new_c = c as isize + col_step;
+                    if new_r >= 0 && new_r < map_width as isize && new_c >= 0 && new_c < map_width as isize {
+                        let new_pos_idx = ((new_r as usize) << shift) | (new_c as usize);
+                        neighbors[valid_count] = new_pos_idx;
+                        valid_count += 1;
+                    }
+                }
+
+                chosen_pos = neighbors[0];
+
+                let mut total_weight = 0.0;
+                for j in 0..valid_count {
+                    let neighbor = neighbors[j];
+                    total_weight += 1.0 + pheromone_strengths[neighbor];
+                }
+
+                let k = random_generator.f32_inclusive() * total_weight;
+                let mut cur = 0.0;
+
+                for j in 0..valid_count {
+                    let neighbor = neighbors[j];
+                    cur += 1.0 + pheromone_strengths[neighbor];
+                    if cur >= k {
+                        chosen_pos = neighbor;
+                        break;
+                    }
+                }
+            } else {
+                let nest_id = self.nest_ids[i];
+                let nest_pos = nest_positions[nest_id];
+
+                let r_nest = nest_pos >> shift;
+                let c_nest = nest_pos & mask;
+
+                let r_diff = r_nest as isize - r as isize;
+                let c_diff = c_nest as isize - c as isize;
+
+                let row_step = r_diff.signum();
+                let col_step = c_diff.signum();
+
+                let new_r = r as isize + row_step;
+                let new_c = c as isize + col_step;
+
+                chosen_pos = ((new_r as usize) << shift) | (new_c as usize)
+            }
+
+            self.pos[i] = chosen_pos;
         }
     }
 }
@@ -215,7 +280,7 @@ mod tests {
         let nest_pool = NestPool::new(4, 4096, 1);
         assert_eq!(ant_pool.pos.len(), 4);
         assert_eq!(ant_pool.pos, vec![0, 32, 2048, 2080]);
-        assert_eq!(ant_pool.state, vec![AntState::Searching; 4]);
+        assert_eq!(ant_pool.state, vec![0; 4]);
         assert_eq!(ant_pool.nest_ids, vec![0, 1, 2, 3]);
         assert_eq!(ant_pool.pos, nest_pool.pos);
         assert_eq!(nest_pool.pos[ant_pool.nest_ids[0] as usize], ant_pool.pos[0]);
