@@ -31,76 +31,6 @@ impl AntPool {
         }
     }
 
-    pub fn move_ants(&mut self, pheromone_strengths: &[f32], map_width: usize, nest_positions: &[usize]) {
-        let mask = map_width -1;
-        let shift = map_width.trailing_zeros();
-
-        let directions = [(0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)];
-        let mut random_generator = Rng::new();
-
-        for i in 0..self.pos.len() {
-            let current_pos = self.pos[i];
-            let current_state = self.state[i];
-            let mut chosen_pos;
-
-            let r = current_pos >> shift;
-            let c = current_pos & mask;
-
-            if current_state == 0 {
-                let mut neighbors = [0usize; 8];
-                let mut valid_count = 0;
-
-                for (row_step, col_step) in directions.iter() {
-                    let new_r = r as isize + row_step;
-                    let new_c = c as isize + col_step;
-                    if new_r >= 0 && new_r < map_width as isize && new_c >= 0 && new_c < map_width as isize {
-                        let new_pos_idx = ((new_r as usize) << shift) | (new_c as usize);
-                        neighbors[valid_count] = new_pos_idx;
-                        valid_count += 1;
-                    }
-                }
-
-                chosen_pos = neighbors[0];
-
-                let mut total_weight = 0.0;
-                for j in 0..valid_count {
-                    let neighbor = neighbors[j];
-                    total_weight += 1.0 + pheromone_strengths[neighbor];
-                }
-
-                let k = random_generator.f32_inclusive() * total_weight;
-                let mut cur = 0.0;
-
-                for j in 0..valid_count {
-                    let neighbor = neighbors[j];
-                    cur += 1.0 + pheromone_strengths[neighbor];
-                    if cur >= k {
-                        chosen_pos = neighbor;
-                        break;
-                    }
-                }
-            } else {
-                let nest_id = self.nest_ids[i];
-                let nest_pos = nest_positions[nest_id];
-
-                let r_nest = nest_pos >> shift;
-                let c_nest = nest_pos & mask;
-
-                let r_diff = r_nest as isize - r as isize;
-                let c_diff = c_nest as isize - c as isize;
-
-                let row_step = r_diff.signum();
-                let col_step = c_diff.signum();
-
-                let new_r = r as isize + row_step;
-                let new_c = c as isize + col_step;
-
-                chosen_pos = ((new_r as usize) << shift) | (new_c as usize)
-            }
-
-            self.pos[i] = chosen_pos;
-        }
-    }
 }
 
 pub struct FoodPool {
@@ -128,36 +58,6 @@ impl PheromonePool {
             strength: vec![0.0; map_area],
             active_chunks: Vec::with_capacity(no_of_chunks),
         }
-    }
-
-    pub fn evaporate(&mut self, evaporation_strength: f32, map_width: usize, no_of_chunks: usize) {
-        let chunks_per_side = no_of_chunks.isqrt();
-
-        self.active_chunks.retain(|&chunk_id| {
-            let chunk_r = chunk_id / chunks_per_side;
-            let chunk_c = chunk_id % chunks_per_side;
-            let world_r = chunk_r * 32;
-            let world_c = chunk_c * 32;
-            let world_idx = world_r * map_width + world_c;
-
-            let mut chunk_is_empty = true;
-            for r in 0..32 {
-                let row_idx = world_idx + r * map_width;
-                for c in 0..32 {
-                    let idx = row_idx + c;
-                    if self.strength[idx] > 0.0 {
-                        self.strength[idx] *= evaporation_strength;
-                        if self.strength[idx] > 0.01 {
-                            chunk_is_empty = false;
-                        } else {
-                            self.strength[idx] = 0.0;
-                        }
-                    }
-                }
-            }
-
-            !chunk_is_empty
-        });
     }
 }
 
@@ -248,6 +148,120 @@ impl World {
             nest_pool,
             settings,
         }
+    }
+
+    pub fn tick(&mut self) {
+        let &mut World {
+            ref mut ant_pool,
+            ref nest_pool,
+            ref mut pheromone_pool,
+            ref settings,
+            ref mut food_pool,
+        } = self;
+
+        World::move_ants(ant_pool, &mut pheromone_pool.strength, settings.map_area.isqrt(), &nest_pool.pos);
+        World::evaporate(pheromone_pool, 0.99, settings.map_area.isqrt(), settings.no_of_chunks as usize);
+    }
+
+    fn move_ants(ant_pool: &mut AntPool, pheromone_strengths: &mut [f32], map_width: usize, nest_positions: &[usize]) {
+        let mask = map_width -1;
+        let shift = map_width.trailing_zeros();
+
+        let directions = [(0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)];
+        let mut random_generator = Rng::new();
+
+        for i in 0..ant_pool.pos.len() {
+            let current_pos = ant_pool.pos[i];
+            let current_state = ant_pool.state[i];
+            let mut chosen_pos;
+
+            let r = current_pos >> shift;
+            let c = current_pos & mask;
+
+            if current_state == 0 {
+                let mut neighbors = [0usize; 8];
+                let mut valid_count = 0;
+
+                for (row_step, col_step) in directions.iter() {
+                    let new_r = r as isize + row_step;
+                    let new_c = c as isize + col_step;
+                    if new_r >= 0 && new_r < map_width as isize && new_c >= 0 && new_c < map_width as isize {
+                        let new_pos_idx = ((new_r as usize) << shift) | (new_c as usize);
+                        neighbors[valid_count] = new_pos_idx;
+                        valid_count += 1;
+                    }
+                }
+
+                chosen_pos = neighbors[0];
+
+                let mut total_weight = 0.0;
+                for j in 0..valid_count {
+                    let neighbor = neighbors[j];
+                    total_weight += 1.0 + pheromone_strengths[neighbor];
+                }
+
+                let k = random_generator.f32_inclusive() * total_weight;
+                let mut cur = 0.0;
+
+                for j in 0..valid_count {
+                    let neighbor = neighbors[j];
+                    cur += 1.0 + pheromone_strengths[neighbor];
+                    if cur >= k {
+                        chosen_pos = neighbor;
+                        break;
+                    }
+                }
+            } else {
+                let nest_id = ant_pool.nest_ids[i] as usize;
+                let nest_pos = nest_positions[nest_id];
+
+                let r_nest = nest_pos >> shift;
+                let c_nest = nest_pos & mask;
+
+                let r_diff = r_nest as isize - r as isize;
+                let c_diff = c_nest as isize - c as isize;
+
+                let row_step = r_diff.signum();
+                let col_step = c_diff.signum();
+
+                let new_r = r as isize + row_step;
+                let new_c = c as isize + col_step;
+
+                chosen_pos = ((new_r as usize) << shift) | (new_c as usize)
+            }
+
+            ant_pool.pos[i] = chosen_pos;
+        }
+    }
+
+    pub fn evaporate(pheromone_pool: &mut PheromonePool, evaporation_strength: f32, map_width: usize, no_of_chunks: usize) {
+        let chunks_per_side = no_of_chunks.isqrt();
+
+        pheromone_pool.active_chunks.retain(|&chunk_id| {
+            let chunk_r = chunk_id / chunks_per_side;
+            let chunk_c = chunk_id % chunks_per_side;
+            let world_r = chunk_r * 32;
+            let world_c = chunk_c * 32;
+            let world_idx = world_r * map_width + world_c;
+
+            let mut chunk_is_empty = true;
+            for r in 0..32 {
+                let row_idx = world_idx + r * map_width;
+                for c in 0..32 {
+                    let idx = row_idx + c;
+                    if pheromone_pool.strength[idx] > 0.0 {
+                        pheromone_pool.strength[idx] *= evaporation_strength;
+                        if pheromone_pool.strength[idx] > 0.01 {
+                            chunk_is_empty = false;
+                        } else {
+                            pheromone_pool.strength[idx] = 0.0;
+                        }
+                    }
+                }
+            }
+
+            !chunk_is_empty
+        });
     }
 }
 
