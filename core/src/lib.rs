@@ -175,8 +175,7 @@ impl World {
             let current_state = ant_pool.state[i];
             let mut chosen_pos;
 
-            let r = current_pos >> shift;
-            let c = current_pos & mask;
+            let (r, c) = World::world_idx_to_rc(current_pos, shift, mask);
 
             if current_state == 0 {
                 let mut neighbors = [0usize; 8];
@@ -186,7 +185,7 @@ impl World {
                     let new_r = r as isize + row_step;
                     let new_c = c as isize + col_step;
                     if new_r >= 0 && new_r < map_width as isize && new_c >= 0 && new_c < map_width as isize {
-                        let new_pos_idx = ((new_r as usize) << shift) | (new_c as usize);
+                        let new_pos_idx = World::rc_to_world_idx(new_r as usize, new_c as usize, shift);
                         neighbors[valid_count] = new_pos_idx;
                         valid_count += 1;
                     }
@@ -215,8 +214,7 @@ impl World {
                 let nest_id = ant_pool.nest_ids[i] as usize;
                 let nest_pos = nest_positions[nest_id];
 
-                let r_nest = nest_pos >> shift;
-                let c_nest = nest_pos & mask;
+                let (r_nest, c_nest) = World::world_idx_to_rc(nest_pos, shift, mask);
 
                 let r_diff = r_nest as isize - r as isize;
                 let c_diff = c_nest as isize - c as isize;
@@ -227,26 +225,33 @@ impl World {
                 let new_r = r as isize + row_step;
                 let new_c = c as isize + col_step;
 
-                chosen_pos = ((new_r as usize) << shift) | (new_c as usize)
+                chosen_pos = World::rc_to_world_idx(new_r as usize, new_c as usize, shift);
             }
 
             ant_pool.pos[i] = chosen_pos;
         }
     }
 
-    pub fn evaporate(pheromone_pool: &mut PheromonePool, evaporation_strength: f32, map_width: usize, no_of_chunks: usize) {
+    fn world_idx_to_rc(world_idx: usize, shift: u32, mask: usize) -> (usize, usize) {
+        (world_idx >> shift, world_idx & mask)
+    }
+
+    fn rc_to_world_idx(r: usize, c: usize, shift: u32) -> usize {
+        r << shift | c
+    }
+
+    fn evaporate(pheromone_pool: &mut PheromonePool, evaporation_strength: f32, map_width: usize, no_of_chunks: usize) {
         let chunks_per_side = no_of_chunks.isqrt();
+        let shift = chunks_per_side.trailing_zeros();
+        let map_width_shift = map_width.trailing_zeros();
+        let mask = chunks_per_side - 1;
 
         pheromone_pool.active_chunks.retain(|&chunk_id| {
-            let chunk_r = chunk_id / chunks_per_side;
-            let chunk_c = chunk_id % chunks_per_side;
-            let world_r = chunk_r * 32;
-            let world_c = chunk_c * 32;
-            let world_idx = world_r * map_width + world_c;
+            let world_idx = World::chunk_idx_to_world_idx(chunk_id, shift, mask, map_width, map_width_shift);
 
             let mut chunk_is_empty = true;
             for r in 0..32 {
-                let row_idx = world_idx + r * map_width;
+                let row_idx = world_idx + (r << map_width_shift);
                 for c in 0..32 {
                     let idx = row_idx + c;
                     if pheromone_pool.strength[idx] > 0.0 {
@@ -263,6 +268,16 @@ impl World {
             !chunk_is_empty
         });
     }
+
+    fn chunk_idx_to_world_idx(chunk_idx: usize, shift: u32, mask: usize, map_width: usize, map_width_shift: u32) -> usize {
+            let chunk_r = chunk_idx >> shift ;
+            let chunk_c = chunk_idx & mask;
+            let world_r = chunk_r << 5; // n in 2^n = 32 is 5
+            let world_c = chunk_c << 5;
+
+            (world_r << map_width_shift) + world_c
+    }
+
 }
 
 #[cfg(test)]
