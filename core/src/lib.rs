@@ -2,7 +2,7 @@ use fastrand::Rng;
 
 #[derive(Debug, PartialEq, Eq)]
 struct AntPool {
-    positions: Vec<usize>, // On global map
+    positions: Vec<usize>,
     states: Vec<u8>, // 0 for searching, 1 for returning
     nest_ids: Vec<u32>,
 }
@@ -19,9 +19,8 @@ impl AntPool {
         for j in 0..capacity {
             positions.push(nest_pos[i]);
             nest_ids.push(i as u32);
-            if j % ants_per_nest == ants_per_nest-1 {
-                i += 1;
-            }
+            // Increase nest id when the current nest is full.
+            if j % ants_per_nest == ants_per_nest-1 { i += 1; }
         }
 
         Self {
@@ -34,7 +33,7 @@ impl AntPool {
 }
 
 struct FoodPool {
-    quantities: Vec<u8>, // On global map
+    quantities: Vec<u8>, // Index represents global map cells
 }
 
 impl FoodPool {
@@ -47,7 +46,7 @@ impl FoodPool {
 
 #[derive(Debug)]
 struct PheromonePool {
-    strengths: Vec<f32>, // Pheromone strength for each chunk id. 0..1024 represents chunk 0
+    strengths: Vec<f32>, // Pheromone strength for each index of a chunk. 0..1024 represents chunk 0
     active_chunks: Vec<usize>, // A chunk is 32x32 = 1024 position
     chunk_flags: Vec<u8>, // For O(1) lookups to check if given chunk is active
 }
@@ -66,9 +65,9 @@ impl PheromonePool {
 
 #[derive(Debug, PartialEq, Eq)]
 struct NestPool {
-    positions: Vec<usize>, // On the global map
+    positions: Vec<usize>,
     player_ids: Vec<u32>,
-    cursor: usize,
+    cursor: usize, // Tracks active player count and serves as the allocation index for the next joining player
     food_counts: Vec<u64>,
 }
 
@@ -76,7 +75,7 @@ impl NestPool {
     fn new(player_count: usize, map_area: usize, chunks_per_player: u16) -> Self {
         let mut positions = Vec::with_capacity(player_count);
         let width = map_area.isqrt();
-        let steps = (chunks_per_player.isqrt() * 32) as usize;
+        let steps = (chunks_per_player.isqrt() * 32) as usize; // Horizontal and vertical distance between nests
 
         for r in (0..width).step_by(steps) {
             for c in (0..width).step_by(steps) {
@@ -114,13 +113,20 @@ fn prev_power_of_two(n: usize) -> usize {
 impl Settings {
     pub fn new(player_count: usize, ants_per_nest: u32, ant_density: f32) -> Self {
         let required_area = (player_count * ants_per_nest as usize) as f32 / ant_density;
+
+        // Map area should be a square that is a power of two, for easier calculations
         let width = (required_area.sqrt() as usize).next_power_of_two();
         let map_area = width * width;
-        let no_of_chunks = (map_area / 1024) as u32;
+
+        let no_of_chunks = (map_area / 1024) as u32; // Chunks are 32*32 = 1024 cells
         let mut rough_chunks_per_player = no_of_chunks as usize / player_count;
-        if rough_chunks_per_player == 0 {
-            rough_chunks_per_player = 1;
-        }
+
+        // Chunks per player can't be zero
+        if rough_chunks_per_player == 0 { rough_chunks_per_player = 1; }
+
+        // Chunks per player represent a territory,
+        // This territory should also be a square that is a power of two.
+        // This fills up the whole map area, leaving nothing to waste.
         let chunks_per_player = prev_power_of_two(rough_chunks_per_player.isqrt()).pow(2) as u16;
         let player_count = no_of_chunks / chunks_per_player as u32;
 
@@ -176,7 +182,7 @@ impl World {
         let chunks_per_side = no_of_chunks.isqrt();
         let chunk_shift = chunks_per_side.trailing_zeros();
 
-        let directions = [(0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)];
+        let directions = [(0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)]; // (0, 0) not allowed
         let mut random_generator = Rng::new();
 
         for i in 0..ant_pool.positions.len() {
@@ -189,10 +195,11 @@ impl World {
 
             let (r, c) = World::world_idx_to_rc(current_pos, shift, mask);
 
-            if current_state == 0 {
+            if current_state == 0 { // Searching
                 let mut neighbors = [0usize; 8];
                 let mut valid_count = 0;
 
+                // Get all possible neighboring positions
                 for (row_step, col_step) in directions.iter() {
                     let new_r = r as isize + row_step;
                     let new_c = c as isize + col_step;
@@ -209,10 +216,14 @@ impl World {
                 for j in 0..valid_count {
                     let neighbor = neighbors[j];
                     let (r, c) = World::world_idx_to_rc(neighbor, shift, mask);
+
+                    // Pheromone strength is stored using chunk id and its local index
+                    // So need to convert world coordinates to the memory index of the pheromone strength array
                     let (memory_idx, _) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
                     total_weight += 1.0 + pheromone_strengths[memory_idx];
                 }
 
+                // Roulette wheel selection based on pheromone strengths
                 let k = random_generator.f32_inclusive() * total_weight;
                 let mut cur = 0.0;
 
@@ -221,12 +232,12 @@ impl World {
                     let (r, c) = World::world_idx_to_rc(neighbor, shift, mask);
                     let (memory_idx, _) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
                     cur += 1.0 + pheromone_strengths[memory_idx];
-                    if cur >= k {
+                    if cur >= k { // Found the selected neighbor
                         chosen_pos = neighbor;
                         break;
                     }
                 }
-            } else {
+            } else { // Returning
                 let (r_nest, c_nest) = World::world_idx_to_rc(nest_pos, shift, mask);
 
                 let r_diff = r_nest as isize - r as isize;
@@ -235,6 +246,7 @@ impl World {
                 let row_step = r_diff.signum();
                 let col_step = c_diff.signum();
 
+                // Directly move towards ant's nest
                 let new_r = r as isize + row_step;
                 let new_c = c as isize + col_step;
 
@@ -250,6 +262,8 @@ impl World {
             }
 
             ant_pool.positions[i] = chosen_pos;
+
+            // Process food and flip state if reached nest or food
             if current_state == 1 && chosen_pos == nest_pos {
                 nest_pool.food_counts[nest_id] += 2;
                 ant_pool.states[i] = 0;
@@ -270,7 +284,7 @@ impl World {
     }
 
     pub fn world_rc_to_chunk_meta(r: usize, c: usize, chunk_shift: u32) -> (usize, usize) {
-        let chunk_r = r >> 5;
+        let chunk_r = r >> 5; // Chunk is 32x32
         let chunk_c = c >> 5;
         let chunk_idx = chunk_r << chunk_shift | chunk_c;
 
@@ -282,7 +296,6 @@ impl World {
     }
 
     fn evaporate(pheromone_pool: &mut PheromonePool, evaporation_strength: f32) {
-
         pheromone_pool.active_chunks.retain(|&chunk_id| {
             let start_idx = chunk_id << 10;
 
@@ -294,7 +307,7 @@ impl World {
                     if pheromone_pool.strengths[idx] > 0.01 {
                         chunk_is_empty = false;
                     } else {
-                        pheromone_pool.strengths[idx] = 0.0;
+                        pheromone_pool.strengths[idx] = 0.0; // Don't divide further down 0.01
                     }
                 }
             }
