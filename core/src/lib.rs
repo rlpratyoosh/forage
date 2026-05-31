@@ -221,7 +221,7 @@ impl World {
     /// # Examples
     ///
     /// ```
-    /// use core::{Settings, World};
+    /// use forage_core::{Settings, World};
     ///
     /// let mut world = World::new(Settings::new(4, 100, 0.05));
     /// 
@@ -439,6 +439,9 @@ impl World {
 
     /// Spawns a concentrated unit of food at the specified global index.
     ///
+    /// *Note: Given amount should always be even, if it is odd, 
+    /// it'd automatically be converted to even*
+    ///
     /// # Examples
     ///
     /// ```
@@ -446,12 +449,12 @@ impl World {
     ///
     /// let mut world = World::new(Settings::new(4, 100, 0.05));
     ///
-    /// world.add_food(1024, 255);
+    /// world.add_food(1024, 253);
     /// let food_quantities = world.get_food_quantities();
-    /// assert_eq!(food_quantities[1024], 255);
+    /// assert_eq!(food_quantities[1024], 254);
     /// ```
     pub fn add_food(&mut self, idx: usize, amount: u8) {
-        self.food_pool.quantities[idx] = amount;
+        self.food_pool.quantities[idx] = amount + (amount & 1);
     }
 
     /// Returns an immutable slice of all ant global map positions.
@@ -583,8 +586,8 @@ mod tests {
         let food_pool = &world.food_pool;
         assert_eq!(food_pool.quantities, vec![0; 4096]);
 
-        world.add_food(65, 255);
-        assert_eq!(world.food_pool.quantities[65], 255);
+        world.add_food(65, 253);
+        assert_eq!(world.food_pool.quantities[65], 254);
 
         // Movement
         world.tick();
