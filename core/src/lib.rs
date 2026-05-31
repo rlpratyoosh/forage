@@ -2,8 +2,8 @@ use fastrand::Rng;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct AntPool {
-    pos: Vec<usize>,
-    state: Vec<u8>,
+    positions: Vec<usize>, // On global map
+    states: Vec<u8>, // 0 for searching, 1 for returning
     nest_ids: Vec<u32>,
 }
 
@@ -11,22 +11,22 @@ impl AntPool {
     pub fn new(player_count: usize, ants_per_nest: usize, nest_pos: &[usize]) -> Self {
         let capacity = player_count * ants_per_nest;
 
-        let mut pos = Vec::with_capacity(capacity);
+        let mut positions = Vec::with_capacity(capacity);
         let mut nest_ids = Vec::with_capacity(capacity);
 
         let mut i = 0;
 
         for _ in (0..capacity).step_by(ants_per_nest) {
             for _ in 0..ants_per_nest {
-                pos.push(nest_pos[i]);
+                positions.push(nest_pos[i]);
                 nest_ids.push(i as u32);
             }
             i += 1;
         }
 
         Self {
-            pos,
-            state: vec![0; capacity],
+            positions,
+            states: vec![0; capacity],
             nest_ids,
         }
     }
@@ -34,22 +34,22 @@ impl AntPool {
 }
 
 pub struct FoodPool {
-    quantity: Vec<u8>,
+    quantities: Vec<u8>, // On global map
 }
 
 impl FoodPool {
     pub fn new(map_area: usize) -> Self {
         Self {
-            quantity: vec![0; map_area],
+            quantities: vec![0; map_area],
         }
     }
 }
 
 #[derive(Debug)]
 pub struct PheromonePool {
-    strength: Vec<f32>,
-    active_chunks: Vec<usize>,
-    chunk_flags: Vec<u8>,
+    strengths: Vec<f32>, // Pheromone strength for each chunk id. 0..1024 represents chunk 0
+    active_chunks: Vec<usize>, // A chunk is 32x32 = 1024 position
+    chunk_flags: Vec<u8>, // For O(1) lookups to check if given chunk is active
 }
 
 impl PheromonePool {
@@ -57,7 +57,7 @@ impl PheromonePool {
         let no_of_chunks = map_area / 1024;
 
         Self {
-            strength: vec![0.0; map_area],
+            strengths: vec![0.0; map_area],
             active_chunks: Vec::with_capacity(no_of_chunks),
             chunk_flags: vec![0; no_of_chunks],
         }
@@ -66,30 +66,30 @@ impl PheromonePool {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct NestPool {
-    pos: Vec<usize>,
+    positions: Vec<usize>, // On the global map
     player_ids: Vec<u32>,
     cursor: usize,
-    stored_food: Vec<u64>,
+    food_counts: Vec<u64>,
 }
 
 impl NestPool {
     pub fn new(player_count: usize, map_area: usize, chunks_per_player: u16) -> Self {
-        let mut pos = Vec::with_capacity(player_count);
+        let mut positions = Vec::with_capacity(player_count);
         let width = map_area.isqrt();
         let steps = (chunks_per_player.isqrt() * 32) as usize;
 
         for r in (0..width).step_by(steps) {
             for c in (0..width).step_by(steps) {
                 let idx = r * width + c;
-                pos.push(idx);
+                positions.push(idx);
             }
         }
 
         Self {
-            pos,
+            positions,
             player_ids: vec![0; player_count],
             cursor: 0,
-            stored_food: vec![0; player_count],
+            food_counts: vec![0; player_count],
         }
     }
 }
@@ -147,7 +147,7 @@ impl World {
         let nest_pool = NestPool::new(settings.player_count as usize, settings.map_area as usize, settings.chunks_per_player);
 
         Self {
-            ant_pool: AntPool::new(settings.player_count as usize, settings.ants_per_nest as usize, &nest_pool.pos),
+            ant_pool: AntPool::new(settings.player_count as usize, settings.ants_per_nest as usize, &nest_pool.positions),
             food_pool: FoodPool::new(settings.map_area),
             pheromone_pool: PheromonePool::new(settings.map_area),
             nest_pool,
@@ -171,17 +171,17 @@ impl World {
     fn move_ants(ant_pool: &mut AntPool, pheromone_pool: &mut PheromonePool, map_width: usize, nest_pool: &mut NestPool, food_pool: &mut FoodPool, no_of_chunks: usize) {
         let mask = map_width -1;
         let shift = map_width.trailing_zeros();
-        let pheromone_strengths = &mut pheromone_pool.strength;
-        let nest_positions = &nest_pool.pos;
+        let pheromone_strengths = &mut pheromone_pool.strengths;
+        let nest_positions = &nest_pool.positions;
         let chunks_per_side = no_of_chunks.isqrt();
         let chunk_shift = chunks_per_side.trailing_zeros();
 
         let directions = [(0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)];
         let mut random_generator = Rng::new();
 
-        for i in 0..ant_pool.pos.len() {
-            let current_pos = ant_pool.pos[i];
-            let current_state = ant_pool.state[i];
+        for i in 0..ant_pool.positions.len() {
+            let current_pos = ant_pool.positions[i];
+            let current_state = ant_pool.states[i];
             let nest_id = ant_pool.nest_ids[i] as usize;
             let nest_pos = nest_positions[nest_id];
 
@@ -249,14 +249,14 @@ impl World {
                 }
             }
 
-            ant_pool.pos[i] = chosen_pos;
+            ant_pool.positions[i] = chosen_pos;
             if current_state == 1 && chosen_pos == nest_pos {
-                nest_pool.stored_food[nest_id] += 2;
-                ant_pool.state[i] = 0;
+                nest_pool.food_counts[nest_id] += 2;
+                ant_pool.states[i] = 0;
             }
-            if current_state == 0 && food_pool.quantity[chosen_pos] > 1 {
-                food_pool.quantity[chosen_pos] -= 2;
-                ant_pool.state[i] = 1;
+            if current_state == 0 && food_pool.quantities[chosen_pos] > 1 {
+                food_pool.quantities[chosen_pos] -= 2;
+                ant_pool.states[i] = 1;
             }
         }
     }
@@ -289,12 +289,12 @@ impl World {
             let mut chunk_is_empty = true;
             for i in 0..1024 {
                 let idx = start_idx + i;
-                if pheromone_pool.strength[idx] > 0.0 {
-                    pheromone_pool.strength[idx] *= evaporation_strength;
-                    if pheromone_pool.strength[idx] > 0.01 {
+                if pheromone_pool.strengths[idx] > 0.0 {
+                    pheromone_pool.strengths[idx] *= evaporation_strength;
+                    if pheromone_pool.strengths[idx] > 0.01 {
                         chunk_is_empty = false;
                     } else {
-                        pheromone_pool.strength[idx] = 0.0;
+                        pheromone_pool.strengths[idx] = 0.0;
                     }
                 }
             }
@@ -308,7 +308,7 @@ impl World {
     }
 
     pub fn add_food(&mut self, idx: usize, amount: u8) {
-        self.food_pool.quantity[idx] = amount;
+        self.food_pool.quantities[idx] = amount;
     }
 
 }
@@ -336,33 +336,33 @@ mod tests {
 
         // NestPool
         let nest_pool = &world.nest_pool;
-        assert_eq!(nest_pool.pos, vec![0, 32, 2048, 2080]);
+        assert_eq!(nest_pool.positions, vec![0, 32, 2048, 2080]);
         assert_eq!(nest_pool.player_ids, vec![0; 4]);
         assert_eq!(nest_pool.cursor, 0);
-        assert_eq!(nest_pool.stored_food, vec![0; 4]);
+        assert_eq!(nest_pool.food_counts, vec![0; 4]);
 
         // AntPool
         let ant_pool = &world.ant_pool;
-        assert_eq!(ant_pool.pos, vec![0, 32, 2048, 2080]);
-        assert_eq!(ant_pool.state, vec![0; 4]);
+        assert_eq!(ant_pool.positions, vec![0, 32, 2048, 2080]);
+        assert_eq!(ant_pool.states, vec![0; 4]);
         assert_eq!(ant_pool.nest_ids, vec![0, 1, 2, 3]);
-        assert_eq!(ant_pool.pos, nest_pool.pos);
-        assert_eq!(nest_pool.pos[ant_pool.nest_ids[0] as usize], ant_pool.pos[0]);
+        assert_eq!(ant_pool.positions, nest_pool.positions);
+        assert_eq!(nest_pool.positions[ant_pool.nest_ids[0] as usize], ant_pool.positions[0]);
 
         // PheromonePool
         let pheromone_pool = &world.pheromone_pool;
-        assert_eq!(pheromone_pool.strength, vec![0.0; 4096]);
+        assert_eq!(pheromone_pool.strengths, vec![0.0; 4096]);
         assert_eq!(pheromone_pool.chunk_flags, vec![0; world.settings.no_of_chunks as usize]);
 
         // FoodPool
         let food_pool = &world.food_pool;
-        assert_eq!(food_pool.quantity, vec![0; 4096]);
+        assert_eq!(food_pool.quantities, vec![0; 4096]);
 
         world.add_food(65, 255);
-        assert_eq!(world.food_pool.quantity[65], 255);
+        assert_eq!(world.food_pool.quantities[65], 255);
 
         // Movement
         world.tick();
-        assert_ne!(world.ant_pool.pos, vec![0, 32, 2048, 2080]);
+        assert_ne!(world.ant_pool.positions, vec![0, 32, 2048, 2080]);
     }
 }
