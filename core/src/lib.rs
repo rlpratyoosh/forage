@@ -1,14 +1,14 @@
 use fastrand::Rng;
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct AntPool {
+struct AntPool {
     positions: Vec<usize>, // On global map
     states: Vec<u8>, // 0 for searching, 1 for returning
     nest_ids: Vec<u32>,
 }
 
 impl AntPool {
-    pub fn new(player_count: usize, ants_per_nest: usize, nest_pos: &[usize]) -> Self {
+     fn new(player_count: usize, ants_per_nest: usize, nest_pos: &[usize]) -> Self {
         let capacity = player_count * ants_per_nest;
 
         let mut positions = Vec::with_capacity(capacity);
@@ -33,12 +33,12 @@ impl AntPool {
 
 }
 
-pub struct FoodPool {
+struct FoodPool {
     quantities: Vec<u8>, // On global map
 }
 
 impl FoodPool {
-    pub fn new(map_area: usize) -> Self {
+    fn new(map_area: usize) -> Self {
         Self {
             quantities: vec![0; map_area],
         }
@@ -46,14 +46,14 @@ impl FoodPool {
 }
 
 #[derive(Debug)]
-pub struct PheromonePool {
+struct PheromonePool {
     strengths: Vec<f32>, // Pheromone strength for each chunk id. 0..1024 represents chunk 0
     active_chunks: Vec<usize>, // A chunk is 32x32 = 1024 position
     chunk_flags: Vec<u8>, // For O(1) lookups to check if given chunk is active
 }
 
 impl PheromonePool {
-    pub fn new(map_area: usize) -> Self {
+    fn new(map_area: usize) -> Self {
         let no_of_chunks = map_area / 1024;
 
         Self {
@@ -65,7 +65,7 @@ impl PheromonePool {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct NestPool {
+struct NestPool {
     positions: Vec<usize>, // On the global map
     player_ids: Vec<u32>,
     cursor: usize,
@@ -73,7 +73,7 @@ pub struct NestPool {
 }
 
 impl NestPool {
-    pub fn new(player_count: usize, map_area: usize, chunks_per_player: u16) -> Self {
+    fn new(player_count: usize, map_area: usize, chunks_per_player: u16) -> Self {
         let mut positions = Vec::with_capacity(player_count);
         let width = map_area.isqrt();
         let steps = (chunks_per_player.isqrt() * 32) as usize;
@@ -261,15 +261,15 @@ impl World {
         }
     }
 
-    fn world_idx_to_rc(world_idx: usize, shift: u32, mask: usize) -> (usize, usize) {
+    pub fn world_idx_to_rc(world_idx: usize, shift: u32, mask: usize) -> (usize, usize) {
         (world_idx >> shift, world_idx & mask)
     }
 
-    fn rc_to_world_idx(r: usize, c: usize, shift: u32) -> usize {
+    pub fn rc_to_world_idx(r: usize, c: usize, shift: u32) -> usize {
         r << shift | c
     }
 
-    fn world_rc_to_chunk_meta(r: usize, c: usize, chunk_shift: u32) -> (usize, usize) {
+    pub fn world_rc_to_chunk_meta(r: usize, c: usize, chunk_shift: u32) -> (usize, usize) {
         let chunk_r = r >> 5;
         let chunk_c = c >> 5;
         let chunk_idx = chunk_r << chunk_shift | chunk_c;
@@ -311,6 +311,25 @@ impl World {
         self.food_pool.quantities[idx] = amount;
     }
 
+    pub fn get_ant_positions(&self) -> &[usize] {
+        &self.ant_pool.positions
+    }
+
+    pub fn get_nest_positions(&self) -> &[usize] {
+        &self.nest_pool.positions
+    }
+
+    pub fn get_food_quantities(&self) -> &[u8] {
+        &self.food_pool.quantities
+    }
+
+    pub fn get_pheromone_strengths(&self) -> &[f32] {
+        &self.pheromone_pool.strengths
+    }
+
+    pub fn get_nest_food_counts(&self) -> &[u64] {
+        &self.nest_pool.food_counts
+    }
 }
 
 #[cfg(test)]
