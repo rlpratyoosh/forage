@@ -1,3 +1,12 @@
+//! A high performance, zero allocation Entity-Component-System (ECS) engine 
+//! for large scale ant colony simulations.
+//!
+//! This engine is built on Data Oriented Design (DOD) principles. It utilizes 
+//! flat, cache aligned memory pools (Structure of Arrays), block major ordering 
+//! for spatial partitioning, and bitwise mathematics for pathfinding. 
+//! All memory is allocated at the boot time to prevent heap fragmentation and 
+//! guarantee deterministic execution during the simulation loop.
+
 use fastrand::Rng;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -93,6 +102,10 @@ impl NestPool {
     }
 }
 
+/// Defines the structural geometry and mathematical constraints of the simulation map.
+///
+/// The engine enforces strictly power of two map dimensions and territory distributions.
+/// This allowed the maths to replace expensive ALU operations to bitwise operations.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Settings {
     map_area: usize,
@@ -111,6 +124,22 @@ fn prev_power_of_two(n: usize) -> usize {
 }
 
 impl Settings {
+    /// Bootstraps the map geometry based on desired player count and ant density.
+    ///
+    /// Instead of hardcoding a map size, this calculates the necessary surface area 
+    /// to maintain the requested density, and then strictly snaps the map width and 
+    /// chunk allocations to the next optimal power of two.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use forage_core::Settings;
+    ///
+    /// // Initialize for 1000 players, 500 ants each, at 5% map density
+    /// let settings = Settings::new(1000, 500, 0.05);
+    ///
+    /// assert_eq!(format!("{:?}", settings), "Settings { map_area: 16777216, player_count: 1024, ants_per_nest: 500, no_of_chunks: 16384, chunks_per_player: 16 }".to_string() );
+    /// ```
     pub fn new(player_count: usize, ants_per_nest: u32, ant_density: f32) -> Self {
         let required_area = (player_count * ants_per_nest as usize) as f32 / ant_density;
 
@@ -140,6 +169,11 @@ impl Settings {
     }
 }
 
+/// The master system orchestrator and ECS state container.
+///
+/// `World` acts as the black box boundary for the simulation. It owns all memory 
+/// pools (Ants, Nests, Pheromones, Food) and safely mutates intersecting systems
+/// simultaneously without runtime lock contention.
 pub struct World {
     ant_pool: AntPool,
     food_pool: FoodPool,
@@ -149,6 +183,20 @@ pub struct World {
 }
 
 impl World {
+    /// Allocates and initializes all ECS memory pools based on the provided settings.
+    ///
+    /// Once `World::new` resolves, all vectors are pre-warmed to their 
+    /// maximum required capacity. No further heap allocations will 
+    /// occur during standard simulation ticks.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use forage_core::{Settings, World};
+    ///
+    /// let settings = Settings::new(4, 100, 0.05);
+    /// let mut world = World::new(settings);
+    /// ```
     pub fn new(settings: Settings) -> Self {
         let nest_pool = NestPool::new(settings.player_count as usize, settings.map_area as usize, settings.chunks_per_player);
 
@@ -161,6 +209,25 @@ impl World {
         }
     }
 
+    /// Advances the simulation state by a single discrete time step.
+    ///
+    /// This is the master heartbeat of the ECS engine.
+    /// It safely passes multiple mutable arrays into systems (movement and evaporation) simultaneously.
+    ///
+    /// The pipeline executes in a strict chronological order:
+    /// 1. **Movement Phase:** Ants process probabilities, move, drop pheromones, harvest and store food.
+    /// 2. **Evaporation Phase:** Evaporates the active pheromones on the map.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::{Settings, World};
+    ///
+    /// let mut world = World::new(Settings::new(4, 100, 0.05));
+    /// 
+    /// // Advance the engine by one frame
+    /// world.tick();
+    /// ```
     pub fn tick(&mut self) {
         let &mut World {
             ref mut ant_pool,
@@ -275,14 +342,64 @@ impl World {
         }
     }
 
+    /// Converts a flat 1D global world index into 2D row and column coordinates.
+    ///
+    /// Uses high speed bitwise shifting and masking. The `shift` and `mask` 
+    /// parameters must be pre-calculated from the map width's trailing zeros.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use forage_core::World;
+    ///
+    /// let map_width = 4096usize;
+    /// let shift = map_width.trailing_zeros();
+    /// let mask = map_width - 1;
+    /// 
+    /// let (r, c) = World::world_idx_to_rc(4097, shift, mask);
+    /// assert_eq!((r, c), (1, 1));
+    /// ```
     pub fn world_idx_to_rc(world_idx: usize, shift: u32, mask: usize) -> (usize, usize) {
         (world_idx >> shift, world_idx & mask)
     }
 
+    /// Flattens 2D row and column coordinates into a 1D global world index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use forage_core::World;
+    ///
+    /// let map_width = 4096usize;
+    /// let shift = map_width.trailing_zeros();
+    /// 
+    /// let idx = World::rc_to_world_idx(1, 1, shift);
+    /// assert_eq!(idx, 4097);
+    /// ```
     pub fn rc_to_world_idx(r: usize, c: usize, shift: u32) -> usize {
         r << shift | c
     }
 
+    /// Translates global 2D coordinates into Block Major (Tiled) memory addresses.
+    ///
+    /// To maximize L1 cache hits during evaporation sweeps, pheromone data is stored 
+    /// in contiguous 32x32 chunks rather than row major order. This function extracts 
+    /// the local chunk coordinates and returns the physical memory index alongside 
+    /// the broad phase chunk ID.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use forage_core::World;
+    ///
+    /// let chunks_per_side = 4usize;
+    /// let chunk_shift = chunks_per_side.trailing_zeros();
+    /// let r = 1;
+    /// let c = 1;
+    /// let (memory_idx, chunk_idx) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
+    /// assert_eq!(memory_idx, 33);
+    /// assert_eq!(chunk_idx, 0);
+    /// ```
     pub fn world_rc_to_chunk_meta(r: usize, c: usize, chunk_shift: u32) -> (usize, usize) {
         let chunk_r = r >> 5; // Chunk is 32x32
         let chunk_c = c >> 5;
@@ -320,26 +437,102 @@ impl World {
         });
     }
 
+    /// Spawns a concentrated unit of food at the specified global index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use forage_core::{Settings, World};
+    ///
+    /// let mut world = World::new(Settings::new(4, 100, 0.05));
+    ///
+    /// world.add_food(1024, 255);
+    /// let food_quantities = world.get_food_quantities();
+    /// assert_eq!(food_quantities[1024], 255);
+    /// ```
     pub fn add_food(&mut self, idx: usize, amount: u8) {
         self.food_pool.quantities[idx] = amount;
     }
 
+    /// Returns an immutable slice of all ant global map positions.
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// use forage_core::{Settings, World};
+    ///
+    /// let world = World::new(Settings::new(4, 1, 0.001));
+    ///
+    /// let ant_positions = world.get_ant_positions();
+    /// assert_eq!(ant_positions, vec![0, 32, 2048, 2080]);
+    /// ```
     pub fn get_ant_positions(&self) -> &[usize] {
         &self.ant_pool.positions
     }
 
+    /// Returns an immutable slice of all nest global map positions.
+    ///
+    /// # Examples
+    /// 
+    /// ```
+    /// use forage_core::{Settings, World};
+    ///
+    /// let world = World::new(Settings::new(4, 1, 0.001));
+    ///
+    /// let nest_positions = world.get_nest_positions();
+    /// assert_eq!(nest_positions, vec![0, 32, 2048, 2080]);
+    /// ```
     pub fn get_nest_positions(&self) -> &[usize] {
         &self.nest_pool.positions
     }
 
+    /// Returns an immutable slice of the entire dense food grid.
+    ///
+    /// # Examples
+    /// 
+    /// ```
+    /// use forage_core::{Settings, World};
+    /// 
+    /// let world = World::new(Settings::new(4, 1, 0.001));
+    ///
+    /// let food_quantities = world.get_food_quantities();
+    /// assert_eq!(food_quantities, vec![0; 4096]);
+    /// ```
     pub fn get_food_quantities(&self) -> &[u8] {
         &self.food_pool.quantities
     }
 
+    /// Returns an immutable slice of the Block Major ordered pheromone grid.
+    /// 
+    /// Note: This array is NOT sorted in row major global indices. Renderers 
+    /// must translate via `world_rc_to_chunk_meta` or iterate block by block.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use forage_core::{Settings, World};
+    ///
+    /// let world = World::new(Settings::new(4, 1, 0.001));
+    ///
+    /// let pheromone_strengths = world.get_pheromone_strengths();
+    /// assert_eq!(pheromone_strengths, vec![0.0; 4096]);
+    /// ```
     pub fn get_pheromone_strengths(&self) -> &[f32] {
         &self.pheromone_pool.strengths
     }
 
+    /// Returns an immutable slice mapping each nest to its successfully returned food count.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use forage_core::{Settings, World};
+    ///
+    /// let world = World::new(Settings::new(4, 1, 0.001));
+    ///
+    /// let nest_food_counts = world.get_nest_food_counts();
+    /// assert_eq!(nest_food_counts, vec![0; 4]);
+    /// ```
     pub fn get_nest_food_counts(&self) -> &[u64] {
         &self.nest_pool.food_counts
     }
