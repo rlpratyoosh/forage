@@ -16,12 +16,12 @@ impl AntPool {
 
         let mut i = 0;
 
-        for _ in (0..capacity).step_by(ants_per_nest) {
-            for _ in 0..ants_per_nest {
-                positions.push(nest_pos[i]);
-                nest_ids.push(i as u32);
+        for j in 0..capacity {
+            positions.push(nest_pos[i]);
+            nest_ids.push(i as u32);
+            if j % ants_per_nest == ants_per_nest-1 {
+                i += 1;
             }
-            i += 1;
         }
 
         Self {
