@@ -8,6 +8,7 @@
 //! guarantee deterministic execution during the simulation loop.
 
 use fastrand::Rng;
+use std::collections::VecDeque;
 
 #[derive(Debug, PartialEq, Eq)]
 struct AntPool {
@@ -75,8 +76,9 @@ impl PheromonePool {
 #[derive(Debug, PartialEq, Eq)]
 struct NestPool {
     positions: Vec<usize>,
-    player_ids: Vec<u32>,
     cursor: usize, // Tracks active player count and serves as the allocation index for the next joining player
+    free_list: VecDeque<usize>,
+    active_nests: Vec<u8>,
     food_counts: Vec<u64>,
 }
 
@@ -95,8 +97,9 @@ impl NestPool {
 
         Self {
             positions,
-            player_ids: vec![0; player_count],
             cursor: 0,
+            free_list: VecDeque::with_capacity(player_count),
+            active_nests: vec![0; player_count],
             food_counts: vec![0; player_count],
         }
     }
@@ -237,11 +240,14 @@ impl World {
             ref mut food_pool,
         } = self;
 
-        World::move_ants(ant_pool, pheromone_pool, settings.map_area.isqrt(), nest_pool, food_pool, settings.no_of_chunks as usize);
+        World::move_ants(ant_pool, pheromone_pool, settings, nest_pool, food_pool);
         World::evaporate(pheromone_pool, 0.99);
     }
 
-    fn move_ants(ant_pool: &mut AntPool, pheromone_pool: &mut PheromonePool, map_width: usize, nest_pool: &mut NestPool, food_pool: &mut FoodPool, no_of_chunks: usize) {
+    fn move_ants(ant_pool: &mut AntPool, pheromone_pool: &mut PheromonePool, settings: &Settings, nest_pool: &mut NestPool, food_pool: &mut FoodPool) {
+        let map_width = settings.map_area.isqrt();
+        let no_of_chunks = settings.no_of_chunks;
+
         let mask = map_width -1;
         let shift = map_width.trailing_zeros();
         let pheromone_strengths = &mut pheromone_pool.strengths;
@@ -251,18 +257,22 @@ impl World {
 
         let directions = [(0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)]; // (0, 0) not allowed
         let mut random_generator = Rng::new();
+        let active_ants = nest_pool.cursor as usize * settings.ants_per_nest as usize;
 
-        for i in 0..ant_pool.positions.len() {
+        for i in 0..active_ants {
+            let nest_id = ant_pool.nest_ids[i] as usize;
+            let nest_active = nest_pool.active_nests[nest_id] == 1;
             let current_pos = ant_pool.positions[i];
             let current_state = ant_pool.states[i];
-            let nest_id = ant_pool.nest_ids[i] as usize;
             let nest_pos = nest_positions[nest_id];
+
+            if !nest_active && current_pos == nest_pos { continue; }
 
             let mut chosen_pos;
 
             let (r, c) = World::world_idx_to_rc(current_pos, shift, mask);
 
-            if current_state == 0 { // Searching
+            if current_state == 0 && nest_active { // Searching
                 let mut neighbors = [0usize; 8];
                 let mut valid_count = 0;
 
@@ -319,23 +329,25 @@ impl World {
 
                 chosen_pos = World::rc_to_world_idx(new_r as usize, new_c as usize, shift);
 
-                let (memory_idx, chunk_idx) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
-                pheromone_strengths[memory_idx] += 10.0;
+                if nest_active {
+                    let (memory_idx, chunk_idx) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
+                    pheromone_strengths[memory_idx] += 10.0;
 
-                if pheromone_pool.chunk_flags[chunk_idx] == 0 {
-                    pheromone_pool.chunk_flags[chunk_idx] = 1;
-                    pheromone_pool.active_chunks.push(chunk_idx);
+                    if pheromone_pool.chunk_flags[chunk_idx] == 0 {
+                        pheromone_pool.chunk_flags[chunk_idx] = 1;
+                        pheromone_pool.active_chunks.push(chunk_idx);
+                    }
                 }
             }
 
             ant_pool.positions[i] = chosen_pos;
 
             // Process food and flip state if reached nest or food
-            if current_state == 1 && chosen_pos == nest_pos {
+            if nest_active && current_state == 1 && chosen_pos == nest_pos {
                 nest_pool.food_counts[nest_id] += 2;
                 ant_pool.states[i] = 0;
             }
-            if current_state == 0 && food_pool.quantities[chosen_pos] > 1 {
+            if nest_active && current_state == 0 && food_pool.quantities[chosen_pos] > 1 {
                 food_pool.quantities[chosen_pos] -= 2;
                 ant_pool.states[i] = 1;
             }
@@ -457,6 +469,53 @@ impl World {
         self.food_pool.quantities[idx] = amount + (amount & 1);
     }
 
+    /// Adds a new player to the simulation, allocating a nest and its corresponding ants.
+    /// 
+    /// Returns an error if the maximum player count has already been reached.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use forage_core::{Settings, World};
+    ///
+    /// let mut world = World::new(Settings::new(4, 1, 0.001));
+    /// 
+    /// let _ = world.add_player();
+    /// let _ = world.add_player();
+    /// let _ = world.add_player();
+    /// let _ = world.add_player();
+    /// let Err(_) = world.add_player() else { panic!("Should not allow more than 4 players") };
+    /// ```
+    pub fn add_player(&mut self) -> Result<(), &'static str> {
+        if let Some(id) = self.nest_pool.free_list.pop_back() {
+            self.nest_pool.active_nests[id] = 1;
+        } else {
+            if self.nest_pool.cursor >= self.settings.player_count as usize {
+                return Err("Maximum player count reached");
+            }
+            self.nest_pool.active_nests[self.nest_pool.cursor] = 1;
+            self.nest_pool.cursor += 1;
+        }
+        Ok(())
+    }
+
+    /// Removes the given player from the map by deactivating their nest and returning their slot to the free list.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use forage_core::{Settings, World};
+    ///
+    /// let mut world = World::new(Settings::new(4, 1, 0.001));
+    /// 
+    /// let _ = world.add_player();
+    /// world.remove_player(0);
+    pub fn remove_player(&mut self, id: usize) {
+        self.nest_pool.active_nests[id] = 0;
+        self.nest_pool.food_counts[id] = 0;
+        self.nest_pool.free_list.push_front(id);
+    }
+
     /// Returns an immutable slice of all ant global map positions.
     /// 
     /// # Examples
@@ -565,8 +624,8 @@ mod tests {
         // NestPool
         let nest_pool = &world.nest_pool;
         assert_eq!(nest_pool.positions, vec![0, 32, 2048, 2080]);
-        assert_eq!(nest_pool.player_ids, vec![0; 4]);
         assert_eq!(nest_pool.cursor, 0);
+        assert_eq!(nest_pool.active_nests, vec![0; 4]);
         assert_eq!(nest_pool.food_counts, vec![0; 4]);
 
         // AntPool
@@ -591,6 +650,22 @@ mod tests {
 
         // Movement
         world.tick();
-        assert_ne!(world.ant_pool.positions, vec![0, 32, 2048, 2080]);
+        assert_eq!(world.ant_pool.positions, vec![0, 32, 2048, 2080]);
+        let _ = world.add_player();
+        world.tick();
+        assert_ne!(world.ant_pool.positions[0], 0);
+        assert_eq!(world.ant_pool.positions[1..], [32, 2048, 2080]);
+
+        // Error check
+        let _ = world.add_player();
+        let _ = world.add_player();
+        let _ = world.add_player();
+        let Err(_) = world.add_player() else { panic!("Should not allow more than 4 players") };
+
+        // Removing a player stops their ants from moving but doesn't affect other players
+        world.remove_player(1);
+        world.tick();
+        assert_eq!(world.ant_pool.positions[1], 32);
+        assert_ne!(world.ant_pool.positions[2..], [2048, 2080]);
     }
 }
