@@ -60,6 +60,7 @@ dependencies = [
 name = "forage-server"
 version = "0.1.0"
 dependencies = [
+ "forage-core",
  "tokio",
 ]
 
