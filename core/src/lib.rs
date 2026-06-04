@@ -421,8 +421,8 @@ impl World {
     /// let chunk_shift = chunks_per_side.trailing_zeros();
     /// let r = 1;
     /// let c = 1;
-    /// let (memory_idx, chunk_idx) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
-    /// assert_eq!(memory_idx, 33);
+    /// let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
+    /// assert_eq!(chunk_local_idx, 33);
     /// assert_eq!(chunk_idx, 0);
     /// ```
     pub fn world_rc_to_chunk_meta(r: usize, c: usize, chunk_shift: u32) -> (usize, usize) {
@@ -479,6 +479,9 @@ impl World {
     /// assert_eq!(food_quantities[1024], 254);
     /// ```
     pub fn add_food(&mut self, idx: usize, amount: u8) {
+        if idx >= self.food_pool.quantities.len() {
+            return; // To Do: Return an Error
+        }
         self.food_pool.quantities[idx] = amount + (amount & 1);
     }
 
