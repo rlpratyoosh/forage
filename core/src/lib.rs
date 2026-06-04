@@ -15,10 +15,11 @@ struct AntPool {
     positions: Vec<usize>,
     states: Vec<u8>, // 0 for searching, 1 for returning
     nest_ids: Vec<u32>,
+    ant_bitboards: Vec<u64>,
 }
 
 impl AntPool {
-     fn new(player_count: usize, ants_per_nest: usize, nest_pos: &[usize]) -> Self {
+     fn new(player_count: usize, ants_per_nest: usize, nest_pos: &[usize], no_of_chunks: usize) -> Self {
         let capacity = player_count * ants_per_nest;
 
         let mut positions = Vec::with_capacity(capacity);
@@ -37,6 +38,7 @@ impl AntPool {
             positions,
             states: vec![0; capacity],
             nest_ids,
+            ant_bitboards: vec![0; no_of_chunks << 4],
         }
     }
 
@@ -204,7 +206,7 @@ impl World {
         let nest_pool = NestPool::new(settings.player_count as usize, settings.map_area as usize, settings.chunks_per_player);
 
         Self {
-            ant_pool: AntPool::new(settings.player_count as usize, settings.ants_per_nest as usize, &nest_pool.positions),
+            ant_pool: AntPool::new(settings.player_count as usize, settings.ants_per_nest as usize, &nest_pool.positions, settings.no_of_chunks as usize),
             food_pool: FoodPool::new(settings.map_area),
             pheromone_pool: PheromonePool::new(settings.map_area),
             nest_pool,
@@ -254,6 +256,8 @@ impl World {
         let nest_positions = &nest_pool.positions;
         let chunks_per_side = no_of_chunks.isqrt();
         let chunk_shift = chunks_per_side.trailing_zeros();
+
+        ant_pool.ant_bitboards.fill(0);
 
         let directions = [(0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)]; // (0, 0) not allowed
         let mut random_generator = Rng::new();
@@ -330,7 +334,8 @@ impl World {
                 chosen_pos = World::rc_to_world_idx(new_r as usize, new_c as usize, shift);
 
                 if nest_active {
-                    let (memory_idx, chunk_idx) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
+                    let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
+                    let memory_idx = (chunk_idx << 10) + chunk_local_idx;
                     pheromone_strengths[memory_idx] += 10.0;
 
                     if pheromone_pool.chunk_flags[chunk_idx] == 0 {
@@ -350,6 +355,14 @@ impl World {
             if nest_active && current_state == 0 && food_pool.quantities[chosen_pos] > 1 {
                 food_pool.quantities[chosen_pos] -= 2;
                 ant_pool.states[i] = 1;
+            }
+
+            if chosen_pos != nest_pos {
+                let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
+                let start = chunk_idx << 4;
+                let board_idx = chunk_local_idx >> 6;
+                let bit_idx = chunk_local_idx & 63;
+                ant_pool.ant_bitboards[start + board_idx] |= 1u64 << bit_idx;
             }
         }
     }
@@ -421,7 +434,7 @@ impl World {
         let chunk_local_c = c & 31;
         let chunk_local_idx = chunk_local_r << 5 | chunk_local_c;
 
-        (((chunk_idx << 10) + chunk_local_idx), chunk_idx)
+        (chunk_local_idx, chunk_idx)
     }
 
     fn evaporate(pheromone_pool: &mut PheromonePool, evaporation_strength: f32) {
