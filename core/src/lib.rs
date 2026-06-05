@@ -446,28 +446,28 @@ impl World {
     }
 
     fn evaporate(pheromone_pool: &mut PheromonePool, evaporation_strength: f32) {
-        pheromone_pool.active_chunks.retain(|&chunk_id| {
+        let mut i = 0;
+
+        while i < pheromone_pool.active_chunks.len() {
+            let chunk_id = pheromone_pool.active_chunks[i];
             let start_idx = chunk_id << 10;
 
+            let chunk = &mut pheromone_pool.strengths[start_idx..start_idx + 1024];
             let mut chunk_is_empty = true;
-            for i in 0..1024 {
-                let idx = start_idx + i;
-                if pheromone_pool.strengths[idx] > 0.0 {
-                    pheromone_pool.strengths[idx] *= evaporation_strength;
-                    if pheromone_pool.strengths[idx] > 0.01 {
-                        chunk_is_empty = false;
-                    } else {
-                        pheromone_pool.strengths[idx] = 0.0; // Don't divide further down 0.01
-                    }
-                }
+
+            for s in chunk.iter_mut() {
+                *s *= evaporation_strength;
+                *s *= (*s > 0.01) as u32 as f32;
+                chunk_is_empty &= *s == 0.0;
             }
 
             if chunk_is_empty {
                 pheromone_pool.chunk_flags[chunk_id] = 0;
+                pheromone_pool.active_chunks.swap_remove(i);
+            } else {
+                i += 1;
             }
-
-            !chunk_is_empty
-        });
+        }
     }
 
     /// Spawns a concentrated unit of food at the specified global index.
