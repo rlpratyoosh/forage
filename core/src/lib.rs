@@ -188,6 +188,7 @@ pub struct World {
     pheromone_pool: PheromonePool,
     nest_pool: NestPool,
     settings: Settings,
+    random_generator: Rng,
 }
 
 impl World {
@@ -207,6 +208,7 @@ impl World {
     /// ```
     pub fn new(settings: Settings) -> Self {
         let nest_pool = NestPool::new(settings.player_count as usize, settings.map_area as usize, settings.chunks_per_player);
+        let random_generator = Rng::new();
 
         Self {
             ant_pool: AntPool::new(settings.player_count as usize, settings.ants_per_nest as usize, &nest_pool.positions, settings.no_of_chunks as usize),
@@ -214,6 +216,7 @@ impl World {
             pheromone_pool: PheromonePool::new(settings.map_area),
             nest_pool,
             settings,
+            random_generator,
         }
     }
 
@@ -243,17 +246,18 @@ impl World {
             ref mut pheromone_pool,
             ref settings,
             ref mut food_pool,
+            ref mut random_generator,
         } = self;
 
-        World::move_ants(ant_pool, pheromone_pool, settings, nest_pool, food_pool);
+        World::move_ants(ant_pool, pheromone_pool, settings, nest_pool, food_pool, random_generator);
         World::evaporate(pheromone_pool, 0.99);
     }
 
-    fn move_ants(ant_pool: &mut AntPool, pheromone_pool: &mut PheromonePool, settings: &Settings, nest_pool: &mut NestPool, food_pool: &mut FoodPool) {
+    fn move_ants(ant_pool: &mut AntPool, pheromone_pool: &mut PheromonePool, settings: &Settings, nest_pool: &mut NestPool, food_pool: &mut FoodPool, random_generator: &mut Rng) {
         let map_width = settings.map_area.isqrt();
         let no_of_chunks = settings.no_of_chunks;
 
-        let mask = map_width -1;
+        let mask = map_width - 1;
         let shift = map_width.trailing_zeros();
         let pheromone_strengths = &mut pheromone_pool.strengths;
         let nest_positions = &nest_pool.positions;
@@ -263,8 +267,7 @@ impl World {
         ant_pool.ant_bitboards.fill(0);
         food_pool.dirty_food.clear();
 
-        let directions = [(0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)]; // (0, 0) not allowed
-        let mut random_generator = Rng::new();
+        const DIRECTIONS: [(isize, isize); 8] = [(0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)];
         let active_ants = nest_pool.cursor as usize * settings.ants_per_nest as usize;
 
         for i in 0..active_ants {
@@ -277,65 +280,55 @@ impl World {
             if !nest_active && current_pos == nest_pos { continue; }
 
             let mut chosen_pos;
-
             let (r, c) = World::world_idx_to_rc(current_pos, shift, mask);
 
             if current_state == 0 && nest_active { // Searching
                 let mut neighbors = [0usize; 8];
+                let mut neighbor_memory_idxs = [0usize; 8];
                 let mut valid_count = 0;
 
-                // Get all possible neighboring positions
-                for (row_step, col_step) in directions.iter() {
+                for (row_step, col_step) in DIRECTIONS.iter() {
                     let new_r = r as isize + row_step;
                     let new_c = c as isize + col_step;
                     if new_r >= 0 && new_r < map_width as isize && new_c >= 0 && new_c < map_width as isize {
-                        let new_pos_idx = World::rc_to_world_idx(new_r as usize, new_c as usize, shift);
-                        neighbors[valid_count] = new_pos_idx;
+                        let new_r = new_r as usize;
+                        let new_c = new_c as usize;
+                        neighbors[valid_count] = World::rc_to_world_idx(new_r, new_c, shift);
+                        let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(new_r, new_c, chunk_shift);
+                        let memory_idx = (chunk_idx << 10) + chunk_local_idx;
+                        neighbor_memory_idxs[valid_count] = memory_idx;
                         valid_count += 1;
                     }
                 }
 
-                chosen_pos = neighbors[0];
-
-                let mut total_weight = 0.0;
+                let mut weights = [0.0f32; 8];
+                let mut total_weight = 0.0f32;
                 for j in 0..valid_count {
-                    let neighbor = neighbors[j];
-                    let (r, c) = World::world_idx_to_rc(neighbor, shift, mask);
-
-                    // Pheromone strength is stored using chunk id and its local index
-                    // So need to convert world coordinates to the memory index of the pheromone strength array
-                    let (memory_idx, _) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
-                    total_weight += 1.0 + pheromone_strengths[memory_idx];
+                    let w = 1.0 + pheromone_strengths[neighbor_memory_idxs[j]];
+                    weights[j] = w;
+                    total_weight += w;
                 }
 
-                // Roulette wheel selection based on pheromone strengths
+                chosen_pos = neighbors[0];
                 let k = random_generator.f32_inclusive() * total_weight;
-                let mut cur = 0.0;
-
+                let mut cur = 0.0f32;
                 for j in 0..valid_count {
-                    let neighbor = neighbors[j];
-                    let (r, c) = World::world_idx_to_rc(neighbor, shift, mask);
-                    let (memory_idx, _) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
-                    cur += 1.0 + pheromone_strengths[memory_idx];
-                    if cur >= k { // Found the selected neighbor
-                        chosen_pos = neighbor;
+                    cur += weights[j];
+                    if cur >= k {
+                        chosen_pos = neighbors[j];
                         break;
                     }
                 }
             } else { // Returning
                 let (r_nest, c_nest) = World::world_idx_to_rc(nest_pos, shift, mask);
 
-                let r_diff = r_nest as isize - r as isize;
-                let c_diff = c_nest as isize - c as isize;
+                let row_step = (r_nest as isize - r as isize).signum();
+                let col_step = (c_nest as isize - c as isize).signum();
 
-                let row_step = r_diff.signum();
-                let col_step = c_diff.signum();
+                let new_r = (r as isize + row_step) as usize;
+                let new_c = (c as isize + col_step) as usize;
 
-                // Directly move towards ant's nest
-                let new_r = r as isize + row_step;
-                let new_c = c as isize + col_step;
-
-                chosen_pos = World::rc_to_world_idx(new_r as usize, new_c as usize, shift);
+                chosen_pos = World::rc_to_world_idx(new_r, new_c, shift);
 
                 if nest_active {
                     let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
@@ -351,7 +344,9 @@ impl World {
 
             ant_pool.positions[i] = chosen_pos;
 
-            // Process food and flip state if reached nest or food
+            let (chose_r, chose_c) = World::world_idx_to_rc(chosen_pos, shift, mask);
+            let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(chose_r, chose_c, chunk_shift);
+
             if nest_active && current_state == 1 && chosen_pos == nest_pos {
                 nest_pool.food_counts[nest_id] += 2;
                 ant_pool.states[i] = 0;
@@ -359,14 +354,9 @@ impl World {
             if nest_active && current_state == 0 && food_pool.quantities[chosen_pos] > 1 {
                 food_pool.quantities[chosen_pos] -= 2;
                 ant_pool.states[i] = 1;
-                let (chose_r, chose_c) = World::world_idx_to_rc(chosen_pos, shift, mask);
-                let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(chose_r, chose_c, chunk_shift);
                 food_pool.dirty_food.push((chunk_idx as u32, chunk_local_idx as u16, food_pool.quantities[chosen_pos]));
             }
-
             if chosen_pos != nest_pos {
-                let (chose_r, chose_c) = World::world_idx_to_rc(chosen_pos, shift, mask);
-                let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(chose_r, chose_c, chunk_shift);
                 let start = chunk_idx << 4;
                 let board_idx = chunk_local_idx >> 6;
                 let bit_idx = chunk_local_idx & 63;
