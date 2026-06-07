@@ -61,7 +61,7 @@ impl FoodPool {
 
 #[derive(Debug)]
 struct PheromonePool {
-    strengths: Vec<f32>, // Pheromone strength for each index of a chunk. 0..1024 represents chunk 0
+    strengths: Vec<u8>, // Pheromone strength for each index of a chunk. 0..1024 represents chunk 0
     active_chunks: Vec<usize>, // A chunk is 32x32 = 1024 position
     chunk_flags: Vec<u8>, // For O(1) lookups to check if given chunk is active
 }
@@ -71,7 +71,7 @@ impl PheromonePool {
         let no_of_chunks = map_area / 1024;
 
         Self {
-            strengths: vec![0.0; map_area],
+            strengths: vec![0; map_area],
             active_chunks: Vec::with_capacity(no_of_chunks),
             chunk_flags: vec![0; no_of_chunks],
         }
@@ -189,6 +189,7 @@ pub struct World {
     nest_pool: NestPool,
     settings: Settings,
     random_generator: Rng,
+    tick_count: u16,
 }
 
 impl World {
@@ -217,6 +218,7 @@ impl World {
             nest_pool,
             settings,
             random_generator,
+            tick_count: 0,
         }
     }
 
@@ -247,10 +249,13 @@ impl World {
             ref settings,
             ref mut food_pool,
             ref mut random_generator,
+            ref mut tick_count,
         } = self;
-
+        *tick_count = *tick_count % 10 + 1;
         World::move_ants(ant_pool, pheromone_pool, settings, nest_pool, food_pool, random_generator);
-        World::evaporate(pheromone_pool, 0.99);
+        if *tick_count == 10 {
+            World::evaporate(pheromone_pool, 1);
+        }
     }
 
     fn move_ants(ant_pool: &mut AntPool, pheromone_pool: &mut PheromonePool, settings: &Settings, nest_pool: &mut NestPool, food_pool: &mut FoodPool, random_generator: &mut Rng) {
@@ -301,17 +306,17 @@ impl World {
                     }
                 }
 
-                let mut weights = [0.0f32; 8];
-                let mut total_weight = 0.0f32;
+                let mut weights = [0u16; 8];
+                let mut total_weight = 0u16;
                 for j in 0..valid_count {
-                    let w = 1.0 + pheromone_strengths[neighbor_memory_idxs[j]];
+                    let w = 1 + pheromone_strengths[neighbor_memory_idxs[j]] as u16;
                     weights[j] = w;
-                    total_weight += w;
+                    total_weight += w as u16;
                 }
 
                 chosen_pos = neighbors[0];
-                let k = random_generator.f32_inclusive() * total_weight;
-                let mut cur = 0.0f32;
+                let k = random_generator.u16(0..=total_weight);
+                let mut cur = 0u16;
                 for j in 0..valid_count {
                     cur += weights[j];
                     if cur >= k {
@@ -333,7 +338,7 @@ impl World {
                 if nest_active {
                     let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
                     let memory_idx = (chunk_idx << 10) + chunk_local_idx;
-                    pheromone_strengths[memory_idx] += 10.0;
+                    pheromone_strengths[memory_idx] = pheromone_strengths[memory_idx].saturating_add(10);
 
                     if pheromone_pool.chunk_flags[chunk_idx] == 0 {
                         pheromone_pool.chunk_flags[chunk_idx] = 1;
@@ -435,7 +440,7 @@ impl World {
         (chunk_local_idx, chunk_idx)
     }
 
-    fn evaporate(pheromone_pool: &mut PheromonePool, evaporation_strength: f32) {
+    fn evaporate(pheromone_pool: &mut PheromonePool, evaporation_strength: u8) {
         let mut i = 0;
 
         while i < pheromone_pool.active_chunks.len() {
@@ -446,9 +451,8 @@ impl World {
             let mut chunk_is_empty = true;
 
             for s in chunk.iter_mut() {
-                *s *= evaporation_strength;
-                *s *= (*s > 0.01) as u32 as f32;
-                chunk_is_empty &= *s == 0.0;
+                *s = s.saturating_sub(evaporation_strength);
+                chunk_is_empty &= *s == 0;
             }
 
             if chunk_is_empty {
@@ -593,7 +597,7 @@ impl World {
     /// let pheromone_strengths = world.get_pheromone_strengths();
     /// assert_eq!(pheromone_strengths, vec![0.0; 4096]);
     /// ```
-    pub fn get_pheromone_strengths(&self) -> &[f32] {
+    pub fn get_pheromone_strengths(&self) -> &[u8] {
         &self.pheromone_pool.strengths
     }
 
