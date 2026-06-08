@@ -12,9 +12,11 @@ use std::collections::VecDeque;
 
 #[derive(Debug, PartialEq, Eq)]
 struct AntPool {
-    positions: Vec<usize>,
+    positions: Vec<usize>, // Data represents index of global map cells
     states: Vec<u8>, // 0 for searching, 1 for returning
     nest_ids: Vec<u32>,
+    // One bit reprsenting presence of an ant in the corresponding cell.
+    // One field represents 64 cells. So 16 fields are needed to represent one chunk of 1024 cells.
     ant_bitboards: Vec<u64>,
 }
 
@@ -38,7 +40,7 @@ impl AntPool {
             positions,
             states: vec![0; capacity],
             nest_ids,
-            ant_bitboards: vec![0; no_of_chunks << 4],
+            ant_bitboards: vec![0; no_of_chunks << 4], // no_of_chunks * 16
         }
     }
 
@@ -51,6 +53,8 @@ struct FoodPool {
 
 impl FoodPool {
     fn new(settings: &Settings) -> Self {
+        // Max 5 % of ants can be eating different foods at the same tick
+        // Keep a minimum size if 1024
         let capacity = (settings.ants_per_nest as usize * settings.player_count as usize / 20).max(1024);
         Self {
             quantities: vec![0; settings.map_area],
@@ -64,7 +68,7 @@ struct PheromonePool {
     strengths: Vec<u8>, // Pheromone strength for each index of a chunk. 0..1024 represents chunk 0
     active_chunks: Vec<usize>, // A chunk is 32x32 = 1024 position
     chunk_flags: Vec<u8>, // For O(1) lookups to check if given chunk is active
-    pheromone_bitboards: Vec<u64>,
+    pheromone_bitboards: Vec<u64>, // Represents changed pheromones this tick. (Not for evaporation)
 }
 
 impl PheromonePool {
@@ -75,7 +79,7 @@ impl PheromonePool {
             strengths: vec![0; map_area],
             active_chunks: Vec::with_capacity(no_of_chunks),
             chunk_flags: vec![0; no_of_chunks],
-            pheromone_bitboards: vec![0; no_of_chunks << 4]
+            pheromone_bitboards: vec![0; no_of_chunks << 4] // no_of_chunks * 16
         }
     }
 }
