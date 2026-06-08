@@ -64,6 +64,7 @@ struct PheromonePool {
     strengths: Vec<u8>, // Pheromone strength for each index of a chunk. 0..1024 represents chunk 0
     active_chunks: Vec<usize>, // A chunk is 32x32 = 1024 position
     chunk_flags: Vec<u8>, // For O(1) lookups to check if given chunk is active
+    pheromone_bitboards: Vec<u64>,
 }
 
 impl PheromonePool {
@@ -74,6 +75,7 @@ impl PheromonePool {
             strengths: vec![0; map_area],
             active_chunks: Vec::with_capacity(no_of_chunks),
             chunk_flags: vec![0; no_of_chunks],
+            pheromone_bitboards: vec![0; no_of_chunks << 4]
         }
     }
 }
@@ -270,6 +272,7 @@ impl World {
         let chunk_shift = chunks_per_side.trailing_zeros();
 
         ant_pool.ant_bitboards.fill(0);
+        pheromone_pool.pheromone_bitboards.fill(0);
         food_pool.dirty_food.clear();
 
         const DIRECTIONS: [(isize, isize); 8] = [(0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)];
@@ -338,7 +341,15 @@ impl World {
                 if nest_active {
                     let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
                     let memory_idx = (chunk_idx << 10) + chunk_local_idx;
-                    pheromone_strengths[memory_idx] = pheromone_strengths[memory_idx].saturating_add(10);
+                    let start = chunk_idx << 4;
+                    let board_idx = chunk_local_idx >> 6;
+                    let bit_idx = chunk_local_idx & 63;
+                    let current_board = pheromone_pool.pheromone_bitboards[start + board_idx];
+                    let is_set = (current_board >> bit_idx) & 1;
+                    let strength = (is_set ^ 1) * 10;
+
+                    pheromone_strengths[memory_idx] = pheromone_strengths[memory_idx].saturating_add(strength as u8);
+                    pheromone_pool.pheromone_bitboards[start + board_idx] |= 1u64 << bit_idx;
 
                     if pheromone_pool.chunk_flags[chunk_idx] == 0 {
                         pheromone_pool.chunk_flags[chunk_idx] = 1;
