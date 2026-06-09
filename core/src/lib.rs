@@ -610,7 +610,7 @@ impl World {
     /// let world = World::new(Settings::new(4, 1, 0.001));
     ///
     /// let pheromone_strengths = world.get_pheromone_strengths();
-    /// assert_eq!(pheromone_strengths, vec![0.0; 4096]);
+    /// assert_eq!(pheromone_strengths, vec![0; 4096]);
     /// ```
     pub fn get_pheromone_strengths(&self) -> &[u8] {
         &self.pheromone_pool.strengths
@@ -671,7 +671,7 @@ mod tests {
 
         // PheromonePool
         let pheromone_pool = &world.pheromone_pool;
-        assert_eq!(pheromone_pool.strengths, vec![0.0; 4096]);
+        assert_eq!(pheromone_pool.strengths, vec![0; 4096]);
         assert_eq!(pheromone_pool.chunk_flags, vec![0; world.settings.no_of_chunks as usize]);
 
         // FoodPool
