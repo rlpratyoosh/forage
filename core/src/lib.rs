@@ -48,17 +48,14 @@ impl AntPool {
 
 struct FoodPool {
     quantities: Vec<u8>, // Index represents global map cells
-    dirty_food: Vec<(u32, u16, u8)>, // Tracks food changes every tick
+    food_bitboards: Vec<u64>, // Tracks food changes every tick
 }
 
 impl FoodPool {
     fn new(settings: &Settings) -> Self {
-        // Max 5 % of ants can be eating different foods at the same tick
-        // Keep a minimum size if 1024
-        let capacity = (settings.ants_per_nest as usize * settings.player_count as usize / 20).max(1024);
         Self {
             quantities: vec![0; settings.map_area],
-            dirty_food: Vec::with_capacity(capacity),
+            food_bitboards: vec![0; (settings.no_of_chunks as usize) << 4usize], // no_of_chunks * 16
         }
     }
 }
@@ -277,7 +274,7 @@ impl World {
 
         ant_pool.ant_bitboards.fill(0);
         pheromone_pool.pheromone_bitboards.fill(0);
-        food_pool.dirty_food.clear();
+        food_pool.food_bitboards.fill(0);
 
         const DIRECTIONS: [(isize, isize); 8] = [(0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)];
         let active_ants = nest_pool.cursor as usize * settings.ants_per_nest as usize;
@@ -367,19 +364,20 @@ impl World {
             let (chose_r, chose_c) = World::world_idx_to_rc(chosen_pos, shift, mask);
             let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(chose_r, chose_c, chunk_shift);
 
+            let start = chunk_idx << 4;
+            let board_idx = chunk_local_idx >> 6;
+            let bit_idx = chunk_local_idx & 63;
+
             if nest_active && current_state == 1 && chosen_pos == nest_pos {
                 nest_pool.food_counts[nest_id] += 2;
                 ant_pool.states[i] = 0;
             }
             if nest_active && current_state == 0 && food_pool.quantities[chosen_pos] > 1 {
                 food_pool.quantities[chosen_pos] -= 2;
+                food_pool.food_bitboards[start + board_idx] |= 1u64 << bit_idx;
                 ant_pool.states[i] = 1;
-                food_pool.dirty_food.push((chunk_idx as u32, chunk_local_idx as u16, food_pool.quantities[chosen_pos]));
             }
             if chosen_pos != nest_pos {
-                let start = chunk_idx << 4;
-                let board_idx = chunk_local_idx >> 6;
-                let bit_idx = chunk_local_idx & 63;
                 ant_pool.ant_bitboards[start + board_idx] |= 1u64 << bit_idx;
             }
         }
