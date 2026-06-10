@@ -9,6 +9,7 @@
 
 use fastrand::Rng;
 use std::collections::VecDeque;
+use forage_network::{ChunkSnapshot, ChunkDelta};
 
 #[derive(Debug, PartialEq, Eq)]
 struct AntPool {
@@ -47,7 +48,7 @@ impl AntPool {
 }
 
 struct FoodPool {
-    quantities: Vec<u8>, // Index represents global map cells
+    quantities: Vec<u8>, // Food quantities for each index of a chunk. 0..1024 represents chunk and so on.
     food_bitboards: Vec<u64>, // Tracks food changes every tick
 }
 
@@ -363,7 +364,7 @@ impl World {
 
             let (chose_r, chose_c) = World::world_idx_to_rc(chosen_pos, shift, mask);
             let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(chose_r, chose_c, chunk_shift);
-
+            let memory_idx = (chunk_idx << 10) + chunk_local_idx;
             let start = chunk_idx << 4;
             let board_idx = chunk_local_idx >> 6;
             let bit_idx = chunk_local_idx & 63;
@@ -372,8 +373,8 @@ impl World {
                 nest_pool.food_counts[nest_id] += 2;
                 ant_pool.states[i] = 0;
             }
-            if nest_active && current_state == 0 && food_pool.quantities[chosen_pos] > 1 {
-                food_pool.quantities[chosen_pos] -= 2;
+            if nest_active && current_state == 0 && food_pool.quantities[memory_idx] > 1 {
+                food_pool.quantities[memory_idx] -= 2;
                 food_pool.food_bitboards[start + board_idx] |= 1u64 << bit_idx;
                 ant_pool.states[i] = 1;
             }
@@ -489,15 +490,16 @@ impl World {
     ///
     /// let mut world = World::new(Settings::new(4, 100, 0.05));
     ///
-    /// world.add_food(1024, 253);
+    /// world.add_food(0, 1, 254);
     /// let food_quantities = world.get_food_quantities();
-    /// assert_eq!(food_quantities[1024], 254);
+    /// assert_eq!(food_quantities[1], 254);
     /// ```
-    pub fn add_food(&mut self, idx: usize, amount: u8) {
-        if idx >= self.food_pool.quantities.len() {
+    pub fn add_food(&mut self, chunk_idx: usize, chunk_local_idx: usize, amount: u8) {
+        if chunk_idx >= self.settings.no_of_chunks as usize || chunk_local_idx >= 1024 {
             return; // To Do: Return an Error
         }
-        self.food_pool.quantities[idx] = amount + (amount & 1);
+        let memory_idx = (chunk_idx << 10) + chunk_local_idx;
+        self.food_pool.quantities[memory_idx] = amount + (amount & 1);
     }
 
     /// Adds a new player to the simulation, allocating a nest and its corresponding ants.
@@ -563,6 +565,25 @@ impl World {
         &self.ant_pool.positions
     }
 
+    /// Returns an immutable slice of the ant bitboard.
+    ///
+    /// The ant bitboards represent presence of ant on a given position per tick.
+    /// 1 bit represents one position, one field represents 64 positions, 16 fields represent one chunk.
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// use forage_core::{Settings, World};
+    ///
+    /// let world = World::new(Settings::new(4, 1, 0.001));
+    ///
+    /// let ant_bitboards = world.get_ant_bitboards();
+    /// assert_eq!(ant_bitboards, vec![0; 4 << 4]);
+    /// ```
+    pub fn get_ant_bitboards(&self) -> &[u64] {
+        &self.ant_pool.ant_bitboards
+    }
+
     /// Returns an immutable slice of all nest global map positions.
     ///
     /// # Examples
@@ -593,6 +614,26 @@ impl World {
     /// ```
     pub fn get_food_quantities(&self) -> &[u8] {
         &self.food_pool.quantities
+    }
+
+
+    /// Returns an immutable slice of the food bitboard.
+    ///
+    /// The food bitboards represent changes in food quantity on a given position per tick.
+    /// 1 bit represents one position, one field represents 64 positions, 16 fields represent one chunk.
+    ///
+    /// # Examples
+    /// 
+    /// ```
+    /// use forage_core::{Settings, World};
+    /// 
+    /// let world = World::new(Settings::new(4, 1, 0.001));
+    ///
+    /// let food_bitboards = world.get_food_bitboards();
+    /// assert_eq!(food_bitboards, vec![0; 4 << 4]);
+    /// ```
+    pub fn get_food_bitboards(&self) -> &[u64] {
+        &self.food_pool.food_bitboards
     }
 
     /// Returns an immutable slice of the Block Major ordered pheromone grid.
@@ -628,6 +669,95 @@ impl World {
     /// ```
     pub fn get_nest_food_counts(&self) -> &[u64] {
         &self.nest_pool.food_counts
+    }
+
+    /// Extracts a complete, standalone state of a 32x32 chunk for new network subscriptions.
+    ///
+    /// This function is used to build the `Welcome` payload or when a client pans 
+    /// their camera into a newly visible region.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use forage_core::{Settings, World};
+    /// use forage_network::ChunkSnapshot;
+    ///
+    /// let mut world = World::new(Settings::new(4, 1, 0.001));
+    ///
+    /// world.tick();
+    /// world.tick();
+    /// let snapshot = world.get_snapshot(1);
+    /// assert_eq!(1, snapshot.chunk_idx);
+    /// ```
+    pub fn get_snapshot(&self, chunk_idx: u32) -> ChunkSnapshot {
+        let ant_start = (chunk_idx as usize) << 4;
+        let pheromone_start = (chunk_idx as usize) << 10;
+
+        let mut ant_bitboards = [0u64; 16];
+        ant_bitboards.copy_from_slice(&self.ant_pool.ant_bitboards[ant_start..ant_start+16]);
+
+        let mut pheromone_strengths = [0u8; 1024];
+        pheromone_strengths.copy_from_slice(&self.pheromone_pool.strengths[pheromone_start..pheromone_start+1024]);
+
+        let mut food_quantities = Vec::new();
+        for local_idx in 0..1024 {
+            let memory_idx = pheromone_start + local_idx;
+            if self.food_pool.quantities[memory_idx] > 1 {
+                food_quantities.push((local_idx as u16, self.food_pool.quantities[memory_idx]));
+            }
+        }
+
+        ChunkSnapshot {
+            chunk_idx,
+            ant_bitboards,
+            pheromone_strengths,
+            food_quantities
+        }
+    }
+
+    /// Extracts the minimal state changes (Deltas) for a 32x32 chunk over the last tick.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use forage_core::{Settings, World};
+    /// use forage_network::ChunkSnapshot;
+    ///
+    /// let mut world = World::new(Settings::new(4, 1, 0.001));
+    ///
+    /// world.tick();
+    /// world.tick();
+    /// let delta = world.get_delta(1);
+    /// assert_eq!(1, delta.chunk_idx);
+    /// ```
+    pub fn get_delta(&self, chunk_idx: u32) -> ChunkDelta {
+        let start = (chunk_idx as usize) << 4;
+
+        let mut ant_bitboards = [0u64; 16];
+        ant_bitboards.copy_from_slice(&self.ant_pool.ant_bitboards[start..start+16]);
+
+        let mut pheromone_bitboards = [0u64; 16];
+        pheromone_bitboards.copy_from_slice(&self.pheromone_pool.pheromone_bitboards[start..start+16]);
+
+        let mut dirty_food = Vec::new();
+        let board_idx = (chunk_idx as usize) << 10;
+        for i in 0..16 {
+            let mut board = self.food_pool.food_bitboards[start + i];
+            while board != 0 {
+                let trailing = board.trailing_zeros();
+                let local_idx = (i << 6) + trailing as usize;
+                let val = self.food_pool.quantities[board_idx + local_idx];
+                dirty_food.push((local_idx as u16, val));
+                board &= board - 1;
+            }
+        }
+
+        ChunkDelta {
+            chunk_idx,
+            ant_bitboards,
+            pheromone_bitboards,
+            dirty_food
+        }
     }
 }
 
@@ -676,8 +806,8 @@ mod tests {
         let food_pool = &world.food_pool;
         assert_eq!(food_pool.quantities, vec![0; 4096]);
 
-        world.add_food(65, 253);
-        assert_eq!(world.food_pool.quantities[65], 254);
+        world.add_food(0, 1, 253);
+        assert_eq!(world.food_pool.quantities[1], 254);
 
         // Movement
         world.tick();
