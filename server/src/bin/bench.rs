@@ -12,16 +12,19 @@ fn run_benchmark(player_count: usize, ants_per_nest: u32, ticks: usize) {
 
     // Scatter some food
     let map_size = world.get_food_quantities().len();
+    let no_of_chunks = map_size / 1024;
 
-    for i in (0..map_size).step_by(64) {
-        world.add_food(i, 254);
+    for i in 0..no_of_chunks {
+        for j in (0..1024).step_by(128) {
+            world.add_food(i, j, 254);
+        }
     }
 
 
-    // Warm up
-    for _ in 0..1000 {
-        world.tick();
-    }
+    // // Warm up
+    // for _ in 0..1000 {
+    //     world.tick();
+    // }
 
     println!(
         "\n=== {} players × {} ants = {} ants ===",

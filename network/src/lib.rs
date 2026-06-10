@@ -10,7 +10,8 @@ pub enum ServerPacket {
         snapshot: Vec<ChunkSnapshot>
     },
     Snapshot(ChunkSnapshot),
-    Delta(ChunkDelta)
+    Delta(ChunkDelta),
+    SpawnFood { chunk_idx: u32, local_idx: u16, quantity: u8 },
 }
 
 #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
@@ -35,7 +36,8 @@ pub enum ClientPacket {
     UpdateViewport {
         chunks: Vec<u32>,
     },
-    Quit
+    Quit,
+    SpawnFood { chunk_idx: u32, local_idx: u16, quantity: u8 },
 }
 
 #[cfg(test)]
