@@ -255,10 +255,13 @@ impl World {
             ref mut random_generator,
             ref mut tick_count,
         } = self;
-        *tick_count = *tick_count % 10 + 1;
+        *tick_count += 1;
+        let start = std::time::Instant::now();
         World::move_ants(ant_pool, pheromone_pool, settings, nest_pool, food_pool, random_generator);
+        println!("{:.2}ms", start.elapsed().as_secs_f64() * 1000.0);
         if *tick_count == 10 {
             World::evaporate(pheromone_pool, 1);
+            *tick_count = 0;
         }
     }
 
@@ -316,7 +319,7 @@ impl World {
                 for j in 0..valid_count {
                     let w = 1 + pheromone_strengths[neighbor_memory_idxs[j]] as u16;
                     weights[j] = w;
-                    total_weight += w as u16;
+                    total_weight += w;
                 }
 
                 chosen_pos = neighbors[0];
