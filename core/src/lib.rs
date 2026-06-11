@@ -256,9 +256,7 @@ impl World {
             ref mut tick_count,
         } = self;
         *tick_count += 1;
-        let start = std::time::Instant::now();
         World::move_ants(ant_pool, pheromone_pool, settings, nest_pool, food_pool, random_generator);
-        println!("{:.2}ms", start.elapsed().as_secs_f64() * 1000.0);
         if *tick_count == 10 {
             World::evaporate(pheromone_pool, 1);
             *tick_count = 0;
