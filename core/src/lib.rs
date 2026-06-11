@@ -179,6 +179,26 @@ impl Settings {
             chunks_per_player,
         }
     }
+
+    pub fn get_map_area(&self) -> usize {
+        self.map_area
+    }
+
+    pub fn get_player_count(&self) -> u32 {
+        self.player_count
+    }
+
+    pub fn get_ants_per_nest(&self) -> u32 {
+        self.ants_per_nest
+    }
+
+    pub fn get_no_of_chunks(&self) -> u32 {
+        self.no_of_chunks
+    }
+
+    pub fn get_chunks_per_player(&self) -> u16 {
+        self.chunks_per_player
+    }
 }
 
 /// The master system orchestrator and ECS state container.
@@ -499,6 +519,12 @@ impl World {
         if chunk_idx >= self.settings.no_of_chunks as usize || chunk_local_idx >= 1024 {
             return; // To Do: Return an Error
         }
+
+        let start = chunk_idx << 4;
+        let board_idx = chunk_local_idx >> 6;
+        let bit_idx = chunk_local_idx & 63;
+        self.food_pool.food_bitboards[start + board_idx] |= 1u64 << bit_idx;
+
         let memory_idx = (chunk_idx << 10) + chunk_local_idx;
         self.food_pool.quantities[memory_idx] = amount + (amount & 1);
     }
