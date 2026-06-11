@@ -546,17 +546,19 @@ impl World {
     /// let _ = world.add_player();
     /// let Err(_) = world.add_player() else { panic!("Should not allow more than 4 players") };
     /// ```
-    pub fn add_player(&mut self) -> Result<(), &'static str> {
+    pub fn add_player(&mut self) -> Result<usize, &'static str> {
         if let Some(id) = self.nest_pool.free_list.pop_back() {
             self.nest_pool.active_nests[id] = 1;
+            Ok(id)
         } else {
             if self.nest_pool.cursor >= self.settings.player_count as usize {
                 return Err("Maximum player count reached");
             }
-            self.nest_pool.active_nests[self.nest_pool.cursor] = 1;
+            let id = self.nest_pool.cursor;
+            self.nest_pool.active_nests[id] = 1;
             self.nest_pool.cursor += 1;
+            Ok(id)
         }
-        Ok(())
     }
 
     /// Removes the given player from the map by deactivating their nest and returning their slot to the free list.
