@@ -22,7 +22,7 @@ pub struct ChunkSnapshot {
     pub food_quantities: Vec<(u16, u8)>,
 }
 
-#[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
+#[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Clone)]
 pub struct ChunkDelta {
     pub chunk_idx: u32,
     pub ant_bitboards: [u64; 16],
@@ -37,7 +37,6 @@ pub enum ClientPacket {
         chunks: Vec<u32>,
     },
     Quit,
-    SpawnFood { chunk_idx: u32, local_idx: u16, quantity: u8 },
 }
 
 #[cfg(test)]
