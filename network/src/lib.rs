@@ -7,7 +7,7 @@ pub enum ServerPacket {
         map_area: u64,
         no_of_chunks: u32,
         chunks_per_player: u16,
-        snapshot: Vec<ChunkSnapshot>
+        snapshots: Vec<ChunkSnapshot>
     },
     Snapshot(ChunkSnapshot),
     Delta(ChunkDelta),
