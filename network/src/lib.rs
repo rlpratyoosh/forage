@@ -6,7 +6,7 @@ pub enum ServerPacket {
         nest_idx: u32,
         map_area: u64,
         no_of_chunks: u32,
-        chunks_per_player: u32,
+        chunks_per_player: u16,
         snapshot: Vec<ChunkSnapshot>
     },
     Snapshot(ChunkSnapshot),
