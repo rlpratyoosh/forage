@@ -515,9 +515,9 @@ impl World {
     /// let food_quantities = world.get_food_quantities();
     /// assert_eq!(food_quantities[1], 254);
     /// ```
-    pub fn add_food(&mut self, chunk_idx: usize, chunk_local_idx: usize, amount: u8) {
+    pub fn add_food(&mut self, chunk_idx: usize, chunk_local_idx: usize, amount: u8) -> Result<(), forage_network::Error> {
         if chunk_idx >= self.settings.no_of_chunks as usize || chunk_local_idx >= 1024 {
-            return; // To Do: Return an Error
+            return Err(forage_network::Error::BadRequest);
         }
 
         let start = chunk_idx << 4;
@@ -527,6 +527,8 @@ impl World {
 
         let memory_idx = (chunk_idx << 10) + chunk_local_idx;
         self.food_pool.quantities[memory_idx] = amount + (amount & 1);
+
+        Ok(())
     }
 
     /// Adds a new player to the simulation, allocating a nest and its corresponding ants.
@@ -537,6 +539,7 @@ impl World {
     ///
     /// ```
     /// use forage_core::{Settings, World};
+    /// use forage_network::Error;
     ///
     /// let mut world = World::new(Settings::new(4, 1, 0.001));
     /// 
@@ -544,15 +547,19 @@ impl World {
     /// let _ = world.add_player();
     /// let _ = world.add_player();
     /// let _ = world.add_player();
-    /// let Err(_) = world.add_player() else { panic!("Should not allow more than 4 players") };
+    /// if let Err(e) = world.add_player() {
+    ///     assert_eq!(e, Error::ServerFull);
+    /// } else {
+    ///     panic!("Should not allow more than 4 players") 
+    /// };
     /// ```
-    pub fn add_player(&mut self) -> Result<usize, &'static str> {
+    pub fn add_player(&mut self) -> Result<usize, forage_network::Error> {
         if let Some(id) = self.nest_pool.free_list.pop_back() {
             self.nest_pool.active_nests[id] = 1;
             Ok(id)
         } else {
             if self.nest_pool.cursor >= self.settings.player_count as usize {
-                return Err("Maximum player count reached");
+                return Err(forage_network::Error::ServerFull);
             }
             let id = self.nest_pool.cursor;
             self.nest_pool.active_nests[id] = 1;
@@ -571,11 +578,17 @@ impl World {
     /// let mut world = World::new(Settings::new(4, 1, 0.001));
     /// 
     /// let _ = world.add_player();
-    /// world.remove_player(0);
-    pub fn remove_player(&mut self, id: usize) {
+    /// let _ = world.remove_player(0);
+    pub fn remove_player(&mut self, id: usize) -> Result<(), forage_network::Error> {
+        if id >= self.nest_pool.active_nests.len() {
+            return Err(forage_network::Error::BadRequest);
+        }
+
         self.nest_pool.active_nests[id] = 0;
         self.nest_pool.food_counts[id] = 0;
         self.nest_pool.free_list.push_front(id);
+
+        Ok(())
     }
 
     /// Returns an immutable slice of all ant global map positions.
@@ -715,10 +728,15 @@ impl World {
     ///
     /// world.tick();
     /// world.tick();
-    /// let snapshot = world.get_snapshot(1);
-    /// assert_eq!(1, snapshot.chunk_idx);
+    /// if let Ok(snapshot) = world.get_snapshot(1){
+    ///     assert_eq!(1, snapshot.chunk_idx);
+    /// }
     /// ```
-    pub fn get_snapshot(&self, chunk_idx: u32) -> ChunkSnapshot {
+    pub fn get_snapshot(&self, chunk_idx: u32) -> Result<ChunkSnapshot, forage_network::Error> {
+        if chunk_idx >= self.settings.no_of_chunks {
+            return Err(forage_network::Error::BadRequest);
+        }
+
         let ant_start = (chunk_idx as usize) << 4;
         let pheromone_start = (chunk_idx as usize) << 10;
 
@@ -736,12 +754,12 @@ impl World {
             }
         }
 
-        ChunkSnapshot {
+        Ok(ChunkSnapshot {
             chunk_idx,
             ant_bitboards,
             pheromone_strengths,
             food_quantities
-        }
+        })
     }
 
     /// Extracts the minimal state changes (Deltas) for a 32x32 chunk over the last tick.
@@ -756,10 +774,15 @@ impl World {
     ///
     /// world.tick();
     /// world.tick();
-    /// let delta = world.get_delta(1);
-    /// assert_eq!(1, delta.chunk_idx);
+    /// if let Ok(delta) = world.get_delta(1) {
+    ///     assert_eq!(1, delta.chunk_idx);
+    /// }
     /// ```
-    pub fn get_delta(&self, chunk_idx: u32) -> ChunkDelta {
+    pub fn get_delta(&self, chunk_idx: u32) -> Result<ChunkDelta, forage_network::Error> {
+        if chunk_idx >= self.settings.no_of_chunks {
+            return Err(forage_network::Error::BadRequest);
+        }
+
         let start = (chunk_idx as usize) << 4;
 
         let mut ant_bitboards = [0u64; 16];
@@ -781,12 +804,12 @@ impl World {
             }
         }
 
-        ChunkDelta {
+        Ok(ChunkDelta {
             chunk_idx,
             ant_bitboards,
             pheromone_bitboards,
             dirty_food
-        }
+        })
     }
 }
 

@@ -39,6 +39,13 @@ pub enum ClientPacket {
     Quit,
 }
 
+
+#[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
+pub enum Error {
+    BadRequest,
+    ServerFull,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,7 +57,7 @@ mod tests {
             map_area: 100,
             no_of_chunks: 10,
             chunks_per_player: 2,
-            snapshot: vec![
+            snapshots: vec![
                 ChunkSnapshot {
                     chunk_idx: 0,
                     ant_bitboards: [0; 16],
