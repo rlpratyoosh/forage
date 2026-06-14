@@ -67,10 +67,10 @@ fn main() {
     // Normal Tests
     // run_benchmark(100, 100, TICKS);
     // run_benchmark(100, 1000, TICKS);
-    // run_benchmark(1000, 1000, TICKS);
+    run_benchmark(1000, 1000, TICKS);
     // run_benchmark(5000, 1000, TICKS);
 
     // Stress Tests
-    run_benchmark(1000, 1000, 1000);
+    // run_benchmark(1000, 1000, 1000);
     // run_benchmark(10000, 1000, 1000);
 }
