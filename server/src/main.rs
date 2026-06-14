@@ -212,8 +212,10 @@ async fn handle_connection(socket: WebSocket, server_state: Arc<ServerState>) {
 
                                 for chunk in chunks {
                                     let chunk = chunk as usize;
-                                    let broadcast_rx = BroadcastStream::new(server_state.chunk_broadcasts[chunk].subscribe());
-                                    broadcast_receivers.insert(chunk, broadcast_rx);
+                                    if ! broadcast_receivers.contains_key(&chunk) {
+                                        let broadcast_rx = BroadcastStream::new(server_state.chunk_broadcasts[chunk].subscribe());
+                                        broadcast_receivers.insert(chunk, broadcast_rx);
+                                    }
                                 }
                             }
 
