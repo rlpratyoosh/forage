@@ -584,9 +584,11 @@ impl World {
             return Err(forage_network::Error::BadRequest);
         }
 
-        self.nest_pool.active_nests[id] = 0;
-        self.nest_pool.food_counts[id] = 0;
-        self.nest_pool.free_list.push_front(id);
+        if self.nest_pool.active_nests[id] == 1 {
+            self.nest_pool.active_nests[id] = 0;
+            self.nest_pool.food_counts[id] = 0;
+            self.nest_pool.free_list.push_front(id);
+        }
 
         Ok(())
     }
