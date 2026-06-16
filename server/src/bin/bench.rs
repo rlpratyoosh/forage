@@ -16,7 +16,7 @@ fn run_benchmark(player_count: usize, ants_per_nest: u32, ticks: usize) {
 
     for i in 0..no_of_chunks {
         for j in (0..1024).step_by(128) {
-            world.add_food(i, j, 254);
+            let _ = world.add_food(i, j, 254);
         }
     }
 

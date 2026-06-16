@@ -563,7 +563,7 @@ impl World {
     ///
     /// let mut world = World::new(Settings::new(4, 100, 0.05));
     ///
-    /// world.add_food(0, 1, 254);
+    /// let _ = world.add_food(0, 1, 254);
     /// let food_quantities = world.get_food_quantities();
     /// assert_eq!(food_quantities[1], 254);
     /// ```
@@ -952,7 +952,7 @@ mod tests {
         let food_pool = &world.food_pool;
         assert_eq!(food_pool.quantities, vec![0; 4096]);
 
-        world.add_food(0, 1, 253);
+        let _ = world.add_food(0, 1, 253);
         assert_eq!(world.food_pool.quantities[1], 254);
 
         // Movement
@@ -972,7 +972,7 @@ mod tests {
         };
 
         // Removing a player stops their ants from moving but doesn't affect other players
-        world.remove_player(1);
+        let _ = world.remove_player(1);
         world.tick();
         assert_eq!(world.ant_pool.positions[1], 32);
         assert_ne!(world.ant_pool.positions[2..], [2048, 2080]);
