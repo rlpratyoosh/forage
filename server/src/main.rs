@@ -18,10 +18,10 @@ const ANT_DENSITY: f32 = 0.05;
 const TICKS_PER_SECOND: u8 = 10;
 
 enum EngineCommad {
-    AddPlayer(oneshot::Sender<Result<u32, String>>),
+    AddPlayer(oneshot::Sender<Result<u32, forage_network::Error>>),
     RemovePlayer(u32),
-    GetSnapshot(u32, oneshot::Sender<ChunkSnapshot>),
-    SpawnFood { chunk_idx: u32, local_idx: u16, quantity: u8 },
+    GetSnapshot(u32, oneshot::Sender<Result<ChunkSnapshot, forage_network::Error>>),
+    SpawnFood { chunk_idx: u32, local_idx: u16, quantity: u8, sender: oneshot::Sender<Result<(), forage_network::Error>> },
 }
 
 struct ServerState {
@@ -69,19 +69,22 @@ async fn main() {
                     EngineCommad::AddPlayer(sender) => {
                         let _ = match world.add_player() {
                             Ok(id) => sender.send(Ok(id as u32)),
-                            Err(e) => sender.send(Err(e.to_string())),
+                            Err(e) => sender.send(Err(e)),
                         };
                     }
 
-                    EngineCommad::RemovePlayer(id) => world.remove_player(id as usize),
+                    EngineCommad::RemovePlayer(id) => {
+                        let _ = world.remove_player(id as usize); // TO DO: Log the error
+                    },
 
                     EngineCommad::GetSnapshot(id, sender) => {
                         let snapshot = world.get_snapshot(id);
                         let _ = sender.send(snapshot);
                     }
 
-                    EngineCommad::SpawnFood { chunk_idx, local_idx, quantity } => {
-                        world.add_food(chunk_idx as usize, local_idx as usize, quantity);
+                    EngineCommad::SpawnFood { chunk_idx, local_idx, quantity, sender } => {
+                        let res = world.add_food(chunk_idx as usize, local_idx as usize, quantity);
+                        let _ = sender.send(res);
                     }
                 };
             }
@@ -92,7 +95,9 @@ async fn main() {
                 let broadcast = &chunk_broadcasts_engine[i];
                 if broadcast.receiver_count() > 0 {
                     let delta = world.get_delta(i as u32);
-                    let _ = broadcast.send(delta);
+                    if let Ok(delta) = delta {
+                        let _ = broadcast.send(delta);
+                    }
                 }
             }
 
@@ -136,100 +141,169 @@ async fn handle_connection(socket: WebSocket, server_state: Arc<ServerState>) {
 
     let engine_tx = &server_state.engine_tx;
 
-     loop {
+    loop {
         tokio::select! {
             Some(msg) = receiver.next() => {
-                let Ok(msg) = msg else { return; };
+                let Ok(msg) = msg else { 
+                    if let Some(id) = nest_id {
+                        let _ = engine_tx.send(EngineCommad::RemovePlayer(id)).await;
+                    }
+                    break;
+                };
 
-                if let Message::Binary(bytes) = msg {
-                    let res = wincode::deserialize::<ClientPacket>(&bytes);
+                if let Message::Binary(bytes) = msg && let Ok(client_packet) = wincode::deserialize::<ClientPacket>(&bytes){
+                    match client_packet {
+                        ClientPacket::Join => {
+                            if let Some(id) = nest_id {
+                                if let Ok(bytes) = wincode::serialize(&forage_network::Error::BadRequest) {
+                                    if sender.send(Message::Binary(Bytes::from(bytes))).await.is_err() {
+                                        let _ = engine_tx.send(EngineCommad::RemovePlayer(id)).await;
+                                    }
+                                    continue;
+                                }
+                            }
 
-                    if let Ok(client_packet) = res {
-                        match client_packet {
-                            ClientPacket::Join => {
-                                let (tx, rx) = oneshot::channel::<Result<u32, String>>();
-                                if let Ok(()) = engine_tx.send(EngineCommad::AddPlayer(tx)).await && let Ok(id) = rx.await {
-                                    match  id {
-                                        Ok(id) => {
-                                            let start = (id as usize) << territory_width;
-                                            let mut snapshot_receivers = Vec::with_capacity(territory_width * territory_width);
+                            let (tx, rx) = oneshot::channel::<Result<u32, forage_network::Error>>();
+                            if let Ok(()) = engine_tx.send(EngineCommad::AddPlayer(tx)).await && let Ok(res) = rx.await {
+                                match res {
+                                    Ok(id) => {
+                                        let start = (id as usize) << territory_width;
+                                        let mut snapshot_receivers = Vec::with_capacity(territory_width * territory_width);
 
-                                            for r in 0..territory_width {
-                                                let r_id = start + (r << map_width.trailing_zeros() as usize);
-                                                for c in 0..territory_width {
-                                                    let chunk_id = r_id + c;
+                                        let mut flag = true;
+                                        for r in 0..territory_width {
+                                            let r_id = start + (r << map_width.trailing_zeros() as usize);
+                                            for c in 0..territory_width {
+                                                let chunk_id = r_id + c;
 
-                                                    let (snapshot_tx, snapshot_rx) = oneshot::channel::<ChunkSnapshot>();
-                                                    if let Ok(()) = engine_tx.send(EngineCommad::GetSnapshot(chunk_id as u32, snapshot_tx)).await{
-                                                        snapshot_receivers.push(snapshot_rx);
+                                                let (snapshot_tx, snapshot_rx) = oneshot::channel::<Result<ChunkSnapshot, forage_network::Error>>();
+                                                if let Ok(()) = engine_tx.send(EngineCommad::GetSnapshot(chunk_id as u32, snapshot_tx)).await {
+                                                    snapshot_receivers.push(snapshot_rx);
+                                                } else {
+                                                    if let Ok(bytes) = wincode::serialize(&forage_network::Error::EngineFailure) {
+                                                        let _ = sender.send(Message::Binary(Bytes::from(bytes))).await;
                                                     }
+                                                    flag = false;
+                                                    break;
+                                                }
 
-                                                    let broadcast_rx = BroadcastStream::new(server_state.chunk_broadcasts[chunk_id].subscribe());
-                                                    broadcast_receivers.insert(chunk_id, broadcast_rx);
+                                                let broadcast_rx = BroadcastStream::new(server_state.chunk_broadcasts[chunk_id].subscribe());
+                                                broadcast_receivers.insert(chunk_id, broadcast_rx);
+                                            }
+                                            if !flag { break; }
+                                        }
+                                        if !flag { break; }
+
+                                        let mut snapshots = Vec::with_capacity(territory_width * territory_width);
+                                        let results = futures::future::join_all(snapshot_receivers).await;
+
+                                        let mut flag = true;
+                                        for result in results {
+                                            if let Ok(result) = result {
+                                                match result {
+                                                    Ok(snapshot) => snapshots.push(snapshot),
+
+                                                    Err(_) => {
+                                                        if let Ok(bytes) = wincode::serialize(&forage_network::Error::ServerFailure) {
+                                                            let _ = sender.send(Message::Binary(Bytes::from(bytes))).await;
+                                                        }
+                                                        flag = false;
+                                                        break;
+                                                    }
                                                 }
                                             }
-
-                                            let mut snapshots = Vec::with_capacity(territory_width * territory_width);
-                                            let results = futures::future::join_all(snapshot_receivers).await;
-                                            for result in results {
-                                                if let Ok(snapshot) = result {
-                                                    snapshots.push(snapshot);
-                                                }
-                                            }
-
-                                            let packet = ServerPacket::Welcome {
-                                                nest_idx: id,
-                                                map_area: server_state.map_area,
-                                                no_of_chunks: server_state.no_of_chunks,
-                                                chunks_per_player: server_state.chunks_per_player,
-                                                snapshots,
-                                            };
-                                            if let Ok(bytes) = wincode::serialize(&packet) {
-                                                let _ = sender.send(Message::Binary(Bytes::from(bytes))).await;
-                                            }
-
-                                            nest_id = Some(id);
                                         }
-                                        Err(_e) => {
-                                            // TO DO: Error implementation
+
+                                        if !flag {
+                                            let _ = engine_tx.send(EngineCommad::RemovePlayer(id)).await;
+                                            break;
                                         }
+
+                                        let packet = ServerPacket::Welcome {
+                                            nest_idx: id,
+                                            map_area: server_state.map_area,
+                                            no_of_chunks: server_state.no_of_chunks,
+                                            chunks_per_player: server_state.chunks_per_player,
+                                            snapshots,
+                                        };
+                                        if let Ok(bytes) = wincode::serialize(&packet) {
+                                            if sender.send(Message::Binary(Bytes::from(bytes))).await.is_err() {
+                                                let _ = engine_tx.send(EngineCommad::RemovePlayer(id)).await;
+                                                break;
+                                            }
+                                        }
+
+                                        nest_id = Some(id);
+                                    }
+                                    Err(e) => {
+                                        if let Ok(bytes) = wincode::serialize(&e) {
+                                            let _ = sender.send(Message::Binary(Bytes::from(bytes))).await;
+                                        }
+                                        break;
                                     }
                                 }
+                            } else {
+                                if let Ok(bytes) = wincode::serialize(&forage_network::Error::EngineFailure) {
+                                    let _ = sender.send(Message::Binary(Bytes::from(bytes))).await;
+                                }
+                                break;
+                            }
+                        }
+
+                        ClientPacket::UpdateViewport { chunks } => {
+                            let mut keys_to_remove = Vec::new();
+
+                            for key in broadcast_receivers.keys() {
+                                let k = *key as u32;
+                                if chunks.contains(&k) { continue; }
+                                keys_to_remove.push(*key);
                             }
 
-                            ClientPacket::UpdateViewport { chunks } => {
-                                let mut keys_to_remove = Vec::new();
-
-                                for key in broadcast_receivers.keys() {
-                                    let k = *key as u32;
-                                    if chunks.contains(&k) { continue; }
-                                    keys_to_remove.push(*key);
-                                }
-
-                                for key in keys_to_remove {
-                                    broadcast_receivers.remove(&key);
-                                }
-
-                                for chunk in chunks {
-                                    let chunk = chunk as usize;
-                                    if ! broadcast_receivers.contains_key(&chunk) {
-                                        let broadcast_rx = BroadcastStream::new(server_state.chunk_broadcasts[chunk].subscribe());
-                                        broadcast_receivers.insert(chunk, broadcast_rx);
-                                    }
-                                }
+                            for key in keys_to_remove {
+                                broadcast_receivers.remove(&key);
                             }
 
-                            ClientPacket::Quit => {
-                                if let Some(id) = nest_id {
-                                    let _ = engine_tx.send(EngineCommad::RemovePlayer(id)).await;
+                            for chunk in chunks {
+                                let chunk = chunk as usize;
+                                if !broadcast_receivers.contains_key(&chunk) {
+                                    let broadcast_rx = BroadcastStream::new(server_state.chunk_broadcasts[chunk].subscribe());
+                                    broadcast_receivers.insert(chunk, broadcast_rx);
+                                }
+                            }
+                        }
+
+                        ClientPacket::Quit => {
+                            if let Some(id) = nest_id {
+                                let _ = engine_tx.send(EngineCommad::RemovePlayer(id)).await;
+                            }
+                            break;
+                        }
+
+                        ClientPacket::SpawnFood { chunk_idx, local_idx, quantity } => {
+                            let (tx, rx) = oneshot::channel::<Result<(), forage_network::Error>>();
+
+                            if engine_tx.send(EngineCommad::SpawnFood { chunk_idx, local_idx, quantity, sender: tx }).await.is_err() {
+                                if let Ok(bytes) = wincode::serialize(&forage_network::Error::EngineFailure) {
+                                    let _ = sender.send(Message::Binary(Bytes::from(bytes))).await;
                                 }
                                 break;
                             }
 
-                            ClientPacket::SpawnFood { chunk_idx, local_idx, quantity } => {
-                                let _ = engine_tx.send(EngineCommad::SpawnFood { chunk_idx, local_idx, quantity });
+                            if let Ok(res) = rx.await && let Err(e) = res {
+                                if let Ok(bytes) = wincode::serialize(&e) {
+                                    if sender.send(Message::Binary(Bytes::from(bytes))).await.is_err() {
+                                        if let Some(id) = nest_id {
+                                            let _ = engine_tx.send(EngineCommad::RemovePlayer(id)).await;
+                                        }
+                                        break;
+                                    }
+                                }
                             }
                         }
+                    }
+                } else {
+                    if let Ok(bytes) = wincode::serialize(&forage_network::Error::InvalidRequest) {
+                        let _ = sender.send(Message::Binary(Bytes::from(bytes))).await;
                     }
                 }
             }
@@ -238,7 +312,12 @@ async fn handle_connection(socket: WebSocket, server_state: Arc<ServerState>) {
                 if let Ok(delta) = delta {
                     let packet = ServerPacket::Delta(delta);
                     if let Ok(bytes) = wincode::serialize(&packet) {
-                        let _ = sender.send(Message::Binary(Bytes::from(bytes))).await;
+                        if sender.send(Message::Binary(Bytes::from(bytes))).await.is_err() {
+                            if let Some(id) = nest_id {
+                                let _ = engine_tx.send(EngineCommad::RemovePlayer(id)).await;
+                            }
+                            break;
+                        }
                     }
                 }
             }

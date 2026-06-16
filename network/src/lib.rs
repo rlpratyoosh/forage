@@ -44,6 +44,9 @@ pub enum ClientPacket {
 pub enum Error {
     BadRequest,
     ServerFull,
+    InvalidRequest,
+    EngineFailure,
+    ServerFailure,
 }
 
 #[cfg(test)]
