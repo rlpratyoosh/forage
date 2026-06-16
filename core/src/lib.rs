@@ -1,20 +1,20 @@
-//! A high performance, zero allocation Entity-Component-System (ECS) engine 
+//! A high performance, zero allocation Entity-Component-System (ECS) engine
 //! for large scale ant colony simulations.
 //!
-//! This engine is built on Data Oriented Design (DOD) principles. It utilizes 
-//! flat, cache aligned memory pools (Structure of Arrays), block major ordering 
-//! for spatial partitioning, and bitwise mathematics for pathfinding. 
-//! All memory is allocated at the boot time to prevent heap fragmentation and 
+//! This engine is built on Data Oriented Design (DOD) principles. It utilizes
+//! flat, cache aligned memory pools (Structure of Arrays), block major ordering
+//! for spatial partitioning, and bitwise mathematics for pathfinding.
+//! All memory is allocated at the boot time to prevent heap fragmentation and
 //! guarantee deterministic execution during the simulation loop.
 
 use fastrand::Rng;
+use forage_network::{ChunkDelta, ChunkSnapshot};
 use std::collections::VecDeque;
-use forage_network::{ChunkSnapshot, ChunkDelta};
 
 #[derive(Debug, PartialEq, Eq)]
 struct AntPool {
     positions: Vec<usize>, // Data represents index of global map cells
-    states: Vec<u8>, // 0 for searching, 1 for returning
+    states: Vec<u8>,       // 0 for searching, 1 for returning
     nest_ids: Vec<u32>,
     // One bit reprsenting presence of an ant in the corresponding cell.
     // One field represents 64 cells. So 16 fields are needed to represent one chunk of 1024 cells.
@@ -22,7 +22,12 @@ struct AntPool {
 }
 
 impl AntPool {
-     fn new(player_count: usize, ants_per_nest: usize, nest_pos: &[usize], no_of_chunks: usize) -> Self {
+    fn new(
+        player_count: usize,
+        ants_per_nest: usize,
+        nest_pos: &[usize],
+        no_of_chunks: usize,
+    ) -> Self {
         let capacity = player_count * ants_per_nest;
 
         let mut positions = Vec::with_capacity(capacity);
@@ -34,7 +39,9 @@ impl AntPool {
             positions.push(nest_pos[i]);
             nest_ids.push(i as u32);
             // Increase nest id when the current nest is full.
-            if j % ants_per_nest == ants_per_nest-1 { i += 1; }
+            if j % ants_per_nest == ants_per_nest - 1 {
+                i += 1;
+            }
         }
 
         Self {
@@ -44,7 +51,6 @@ impl AntPool {
             ant_bitboards: vec![0; no_of_chunks << 4], // no_of_chunks * 16
         }
     }
-
 }
 
 struct FoodPool {
@@ -77,7 +83,7 @@ impl PheromonePool {
             strengths: vec![0; map_area],
             active_chunks: Vec::with_capacity(no_of_chunks),
             chunk_flags: vec![0; no_of_chunks],
-            pheromone_bitboards: vec![0; no_of_chunks << 4] // no_of_chunks * 16
+            pheromone_bitboards: vec![0; no_of_chunks << 4], // no_of_chunks * 16
         }
     }
 }
@@ -138,8 +144,8 @@ fn prev_power_of_two(n: usize) -> usize {
 impl Settings {
     /// Bootstraps the map geometry based on desired player count and ant density.
     ///
-    /// Instead of hardcoding a map size, this calculates the necessary surface area 
-    /// to maintain the requested density, and then strictly snaps the map width and 
+    /// Instead of hardcoding a map size, this calculates the necessary surface area
+    /// to maintain the requested density, and then strictly snaps the map width and
     /// chunk allocations to the next optimal power of two.
     ///
     /// # Examples
@@ -163,7 +169,9 @@ impl Settings {
         let mut rough_chunks_per_player = no_of_chunks as usize / player_count;
 
         // Chunks per player can't be zero
-        if rough_chunks_per_player == 0 { rough_chunks_per_player = 1; }
+        if rough_chunks_per_player == 0 {
+            rough_chunks_per_player = 1;
+        }
 
         // Chunks per player represent a territory,
         // This territory should also be a square that is a power of two.
@@ -203,7 +211,7 @@ impl Settings {
 
 /// The master system orchestrator and ECS state container.
 ///
-/// `World` acts as the black box boundary for the simulation. It owns all memory 
+/// `World` acts as the black box boundary for the simulation. It owns all memory
 /// pools (Ants, Nests, Pheromones, Food) and safely mutates intersecting systems
 /// simultaneously without runtime lock contention.
 pub struct World {
@@ -219,8 +227,8 @@ pub struct World {
 impl World {
     /// Allocates and initializes all ECS memory pools based on the provided settings.
     ///
-    /// Once `World::new` resolves, all vectors are pre-warmed to their 
-    /// maximum required capacity. No further heap allocations will 
+    /// Once `World::new` resolves, all vectors are pre-warmed to their
+    /// maximum required capacity. No further heap allocations will
     /// occur during standard simulation ticks.
     ///
     /// # Examples
@@ -232,11 +240,20 @@ impl World {
     /// let mut world = World::new(settings);
     /// ```
     pub fn new(settings: Settings) -> Self {
-        let nest_pool = NestPool::new(settings.player_count as usize, settings.map_area as usize, settings.chunks_per_player);
+        let nest_pool = NestPool::new(
+            settings.player_count as usize,
+            settings.map_area as usize,
+            settings.chunks_per_player,
+        );
         let random_generator = Rng::new();
 
         Self {
-            ant_pool: AntPool::new(settings.player_count as usize, settings.ants_per_nest as usize, &nest_pool.positions, settings.no_of_chunks as usize),
+            ant_pool: AntPool::new(
+                settings.player_count as usize,
+                settings.ants_per_nest as usize,
+                &nest_pool.positions,
+                settings.no_of_chunks as usize,
+            ),
             food_pool: FoodPool::new(&settings),
             pheromone_pool: PheromonePool::new(settings.map_area),
             nest_pool,
@@ -261,7 +278,7 @@ impl World {
     /// use forage_core::{Settings, World};
     ///
     /// let mut world = World::new(Settings::new(4, 100, 0.05));
-    /// 
+    ///
     /// // Advance the engine by one frame
     /// world.tick();
     /// ```
@@ -276,14 +293,28 @@ impl World {
             ref mut tick_count,
         } = self;
         *tick_count += 1;
-        World::move_ants(ant_pool, pheromone_pool, settings, nest_pool, food_pool, random_generator);
+        World::move_ants(
+            ant_pool,
+            pheromone_pool,
+            settings,
+            nest_pool,
+            food_pool,
+            random_generator,
+        );
         if *tick_count == 10 {
             World::evaporate(pheromone_pool, 1);
             *tick_count = 0;
         }
     }
 
-    fn move_ants(ant_pool: &mut AntPool, pheromone_pool: &mut PheromonePool, settings: &Settings, nest_pool: &mut NestPool, food_pool: &mut FoodPool, random_generator: &mut Rng) {
+    fn move_ants(
+        ant_pool: &mut AntPool,
+        pheromone_pool: &mut PheromonePool,
+        settings: &Settings,
+        nest_pool: &mut NestPool,
+        food_pool: &mut FoodPool,
+        random_generator: &mut Rng,
+    ) {
         let map_width = settings.map_area.isqrt();
         let no_of_chunks = settings.no_of_chunks;
 
@@ -298,7 +329,16 @@ impl World {
         pheromone_pool.pheromone_bitboards.fill(0);
         food_pool.food_bitboards.fill(0);
 
-        const DIRECTIONS: [(isize, isize); 8] = [(0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)];
+        const DIRECTIONS: [(isize, isize); 8] = [
+            (0, 1),
+            (1, 0),
+            (1, 1),
+            (0, -1),
+            (-1, 0),
+            (-1, -1),
+            (1, -1),
+            (-1, 1),
+        ];
         let active_ants = nest_pool.cursor as usize * settings.ants_per_nest as usize;
 
         for i in 0..active_ants {
@@ -308,12 +348,15 @@ impl World {
             let current_state = ant_pool.states[i];
             let nest_pos = nest_positions[nest_id];
 
-            if !nest_active && current_pos == nest_pos { continue; }
+            if !nest_active && current_pos == nest_pos {
+                continue;
+            }
 
             let mut chosen_pos;
             let (r, c) = World::world_idx_to_rc(current_pos, shift, mask);
 
-            if current_state == 0 && nest_active { // Searching
+            if current_state == 0 && nest_active {
+                // Searching
                 let mut neighbors = [0usize; 8];
                 let mut neighbor_memory_idxs = [0usize; 8];
                 let mut valid_count = 0;
@@ -321,11 +364,16 @@ impl World {
                 for (row_step, col_step) in DIRECTIONS.iter() {
                     let new_r = r as isize + row_step;
                     let new_c = c as isize + col_step;
-                    if new_r >= 0 && new_r < map_width as isize && new_c >= 0 && new_c < map_width as isize {
+                    if new_r >= 0
+                        && new_r < map_width as isize
+                        && new_c >= 0
+                        && new_c < map_width as isize
+                    {
                         let new_r = new_r as usize;
                         let new_c = new_c as usize;
                         neighbors[valid_count] = World::rc_to_world_idx(new_r, new_c, shift);
-                        let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(new_r, new_c, chunk_shift);
+                        let (chunk_local_idx, chunk_idx) =
+                            World::world_rc_to_chunk_meta(new_r, new_c, chunk_shift);
                         let memory_idx = (chunk_idx << 10) + chunk_local_idx;
                         neighbor_memory_idxs[valid_count] = memory_idx;
                         valid_count += 1;
@@ -350,7 +398,8 @@ impl World {
                         break;
                     }
                 }
-            } else { // Returning
+            } else {
+                // Returning
                 let (r_nest, c_nest) = World::world_idx_to_rc(nest_pos, shift, mask);
 
                 let row_step = (r_nest as isize - r as isize).signum();
@@ -362,7 +411,8 @@ impl World {
                 chosen_pos = World::rc_to_world_idx(new_r, new_c, shift);
 
                 if nest_active {
-                    let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(r, c, chunk_shift);
+                    let (chunk_local_idx, chunk_idx) =
+                        World::world_rc_to_chunk_meta(r, c, chunk_shift);
                     let memory_idx = (chunk_idx << 10) + chunk_local_idx;
                     let start = chunk_idx << 4;
                     let board_idx = chunk_local_idx >> 6;
@@ -371,7 +421,8 @@ impl World {
                     let is_set = (current_board >> bit_idx) & 1;
                     let strength = (is_set ^ 1) * 10;
 
-                    pheromone_strengths[memory_idx] = pheromone_strengths[memory_idx].saturating_add(strength as u8);
+                    pheromone_strengths[memory_idx] =
+                        pheromone_strengths[memory_idx].saturating_add(strength as u8);
                     pheromone_pool.pheromone_bitboards[start + board_idx] |= 1u64 << bit_idx;
 
                     if pheromone_pool.chunk_flags[chunk_idx] == 0 {
@@ -384,7 +435,8 @@ impl World {
             ant_pool.positions[i] = chosen_pos;
 
             let (chose_r, chose_c) = World::world_idx_to_rc(chosen_pos, shift, mask);
-            let (chunk_local_idx, chunk_idx) = World::world_rc_to_chunk_meta(chose_r, chose_c, chunk_shift);
+            let (chunk_local_idx, chunk_idx) =
+                World::world_rc_to_chunk_meta(chose_r, chose_c, chunk_shift);
             let memory_idx = (chunk_idx << 10) + chunk_local_idx;
             let start = chunk_idx << 4;
             let board_idx = chunk_local_idx >> 6;
@@ -407,7 +459,7 @@ impl World {
 
     /// Converts a flat 1D global world index into 2D row and column coordinates.
     ///
-    /// Uses high speed bitwise shifting and masking. The `shift` and `mask` 
+    /// Uses high speed bitwise shifting and masking. The `shift` and `mask`
     /// parameters must be pre-calculated from the map width's trailing zeros.
     ///
     /// # Examples
@@ -418,7 +470,7 @@ impl World {
     /// let map_width = 4096usize;
     /// let shift = map_width.trailing_zeros();
     /// let mask = map_width - 1;
-    /// 
+    ///
     /// let (r, c) = World::world_idx_to_rc(4097, shift, mask);
     /// assert_eq!((r, c), (1, 1));
     /// ```
@@ -435,7 +487,7 @@ impl World {
     ///
     /// let map_width = 4096usize;
     /// let shift = map_width.trailing_zeros();
-    /// 
+    ///
     /// let idx = World::rc_to_world_idx(1, 1, shift);
     /// assert_eq!(idx, 4097);
     /// ```
@@ -445,9 +497,9 @@ impl World {
 
     /// Translates global 2D coordinates into Block Major (Tiled) memory addresses.
     ///
-    /// To maximize L1 cache hits during evaporation sweeps, pheromone data is stored 
-    /// in contiguous 32x32 chunks rather than row major order. This function extracts 
-    /// the local chunk coordinates and returns the physical memory index alongside 
+    /// To maximize L1 cache hits during evaporation sweeps, pheromone data is stored
+    /// in contiguous 32x32 chunks rather than row major order. This function extracts
+    /// the local chunk coordinates and returns the physical memory index alongside
     /// the broad phase chunk ID.
     ///
     /// # Examples
@@ -501,7 +553,7 @@ impl World {
 
     /// Spawns a concentrated unit of food at the specified global index.
     ///
-    /// *Note: Given amount should always be even, if it is odd, 
+    /// *Note: Given amount should always be even, if it is odd,
     /// it'd automatically be converted to even*
     ///
     /// # Examples
@@ -515,7 +567,12 @@ impl World {
     /// let food_quantities = world.get_food_quantities();
     /// assert_eq!(food_quantities[1], 254);
     /// ```
-    pub fn add_food(&mut self, chunk_idx: usize, chunk_local_idx: usize, amount: u8) -> Result<(), forage_network::Error> {
+    pub fn add_food(
+        &mut self,
+        chunk_idx: usize,
+        chunk_local_idx: usize,
+        amount: u8,
+    ) -> Result<(), forage_network::Error> {
         if chunk_idx >= self.settings.no_of_chunks as usize || chunk_local_idx >= 1024 {
             return Err(forage_network::Error::BadRequest);
         }
@@ -532,7 +589,7 @@ impl World {
     }
 
     /// Adds a new player to the simulation, allocating a nest and its corresponding ants.
-    /// 
+    ///
     /// Returns an error if the maximum player count has already been reached.
     ///
     /// # Examples
@@ -542,7 +599,7 @@ impl World {
     /// use forage_network::Error;
     ///
     /// let mut world = World::new(Settings::new(4, 1, 0.001));
-    /// 
+    ///
     /// let _ = world.add_player();
     /// let _ = world.add_player();
     /// let _ = world.add_player();
@@ -550,7 +607,7 @@ impl World {
     /// if let Err(e) = world.add_player() {
     ///     assert_eq!(e, Error::ServerFull);
     /// } else {
-    ///     panic!("Should not allow more than 4 players") 
+    ///     panic!("Should not allow more than 4 players")
     /// };
     /// ```
     pub fn add_player(&mut self) -> Result<usize, forage_network::Error> {
@@ -576,7 +633,7 @@ impl World {
     /// use forage_core::{Settings, World};
     ///
     /// let mut world = World::new(Settings::new(4, 1, 0.001));
-    /// 
+    ///
     /// let _ = world.add_player();
     /// let _ = world.remove_player(0);
     pub fn remove_player(&mut self, id: usize) -> Result<(), forage_network::Error> {
@@ -594,9 +651,9 @@ impl World {
     }
 
     /// Returns an immutable slice of all ant global map positions.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use forage_core::{Settings, World};
     ///
@@ -613,9 +670,9 @@ impl World {
     ///
     /// The ant bitboards represent presence of ant on a given position per tick.
     /// 1 bit represents one position, one field represents 64 positions, 16 fields represent one chunk.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use forage_core::{Settings, World};
     ///
@@ -631,7 +688,7 @@ impl World {
     /// Returns an immutable slice of all nest global map positions.
     ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use forage_core::{Settings, World};
     ///
@@ -647,10 +704,10 @@ impl World {
     /// Returns an immutable slice of the entire dense food grid.
     ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use forage_core::{Settings, World};
-    /// 
+    ///
     /// let world = World::new(Settings::new(4, 1, 0.001));
     ///
     /// let food_quantities = world.get_food_quantities();
@@ -660,17 +717,16 @@ impl World {
         &self.food_pool.quantities
     }
 
-
     /// Returns an immutable slice of the food bitboard.
     ///
     /// The food bitboards represent changes in food quantity on a given position per tick.
     /// 1 bit represents one position, one field represents 64 positions, 16 fields represent one chunk.
     ///
     /// # Examples
-    /// 
+    ///
     /// ```
     /// use forage_core::{Settings, World};
-    /// 
+    ///
     /// let world = World::new(Settings::new(4, 1, 0.001));
     ///
     /// let food_bitboards = world.get_food_bitboards();
@@ -681,8 +737,8 @@ impl World {
     }
 
     /// Returns an immutable slice of the Block Major ordered pheromone grid.
-    /// 
-    /// Note: This array is NOT sorted in row major global indices. Renderers 
+    ///
+    /// Note: This array is NOT sorted in row major global indices. Renderers
     /// must translate via `world_rc_to_chunk_meta` or iterate block by block.
     ///
     /// # Examples
@@ -717,7 +773,7 @@ impl World {
 
     /// Extracts a complete, standalone state of a 32x32 chunk for new network subscriptions.
     ///
-    /// This function is used to build the `Welcome` payload or when a client pans 
+    /// This function is used to build the `Welcome` payload or when a client pans
     /// their camera into a newly visible region.
     ///
     /// # Examples
@@ -743,10 +799,12 @@ impl World {
         let pheromone_start = (chunk_idx as usize) << 10;
 
         let mut ant_bitboards = [0u64; 16];
-        ant_bitboards.copy_from_slice(&self.ant_pool.ant_bitboards[ant_start..ant_start+16]);
+        ant_bitboards.copy_from_slice(&self.ant_pool.ant_bitboards[ant_start..ant_start + 16]);
 
         let mut pheromone_strengths = [0u8; 1024];
-        pheromone_strengths.copy_from_slice(&self.pheromone_pool.strengths[pheromone_start..pheromone_start+1024]);
+        pheromone_strengths.copy_from_slice(
+            &self.pheromone_pool.strengths[pheromone_start..pheromone_start + 1024],
+        );
 
         let mut food_quantities = Vec::new();
         for local_idx in 0..1024 {
@@ -760,7 +818,7 @@ impl World {
             chunk_idx,
             ant_bitboards,
             pheromone_strengths,
-            food_quantities
+            food_quantities,
         })
     }
 
@@ -788,10 +846,11 @@ impl World {
         let start = (chunk_idx as usize) << 4;
 
         let mut ant_bitboards = [0u64; 16];
-        ant_bitboards.copy_from_slice(&self.ant_pool.ant_bitboards[start..start+16]);
+        ant_bitboards.copy_from_slice(&self.ant_pool.ant_bitboards[start..start + 16]);
 
         let mut pheromone_bitboards = [0u64; 16];
-        pheromone_bitboards.copy_from_slice(&self.pheromone_pool.pheromone_bitboards[start..start+16]);
+        pheromone_bitboards
+            .copy_from_slice(&self.pheromone_pool.pheromone_bitboards[start..start + 16]);
 
         let mut dirty_food = Vec::new();
         let board_idx = (chunk_idx as usize) << 10;
@@ -810,7 +869,7 @@ impl World {
             chunk_idx,
             ant_bitboards,
             pheromone_bitboards,
-            dirty_food
+            dirty_food,
         })
     }
 }
@@ -822,11 +881,38 @@ mod tests {
     #[test]
     fn world_settings() {
         let settings = Settings::new(500, 500, 0.05);
-        assert_eq!(settings, Settings { player_count: 1024, ants_per_nest: 500, map_area: 16_777_216, no_of_chunks: 16_384, chunks_per_player: 16 } );
+        assert_eq!(
+            settings,
+            Settings {
+                player_count: 1024,
+                ants_per_nest: 500,
+                map_area: 16_777_216,
+                no_of_chunks: 16_384,
+                chunks_per_player: 16
+            }
+        );
         let settings = Settings::new(2000, 1000, 0.05);
-        assert_eq!(settings, Settings { player_count: 4096, ants_per_nest: 1000, map_area: 67_108_864, no_of_chunks: 65_536, chunks_per_player: 16 } );
+        assert_eq!(
+            settings,
+            Settings {
+                player_count: 4096,
+                ants_per_nest: 1000,
+                map_area: 67_108_864,
+                no_of_chunks: 65_536,
+                chunks_per_player: 16
+            }
+        );
         let settings = Settings::new(1000, 500, 0.05);
-        assert_eq!(settings, Settings { player_count: 1024, ants_per_nest: 500, map_area: 16_777_216, no_of_chunks: 16_384, chunks_per_player: 16 } );
+        assert_eq!(
+            settings,
+            Settings {
+                player_count: 1024,
+                ants_per_nest: 500,
+                map_area: 16_777_216,
+                no_of_chunks: 16_384,
+                chunks_per_player: 16
+            }
+        );
     }
 
     #[test]
@@ -849,12 +935,18 @@ mod tests {
         assert_eq!(ant_pool.states, vec![0; 4]);
         assert_eq!(ant_pool.nest_ids, vec![0, 1, 2, 3]);
         assert_eq!(ant_pool.positions, nest_pool.positions);
-        assert_eq!(nest_pool.positions[ant_pool.nest_ids[0] as usize], ant_pool.positions[0]);
+        assert_eq!(
+            nest_pool.positions[ant_pool.nest_ids[0] as usize],
+            ant_pool.positions[0]
+        );
 
         // PheromonePool
         let pheromone_pool = &world.pheromone_pool;
         assert_eq!(pheromone_pool.strengths, vec![0; 4096]);
-        assert_eq!(pheromone_pool.chunk_flags, vec![0; world.settings.no_of_chunks as usize]);
+        assert_eq!(
+            pheromone_pool.chunk_flags,
+            vec![0; world.settings.no_of_chunks as usize]
+        );
 
         // FoodPool
         let food_pool = &world.food_pool;
@@ -875,7 +967,9 @@ mod tests {
         let _ = world.add_player();
         let _ = world.add_player();
         let _ = world.add_player();
-        let Err(_) = world.add_player() else { panic!("Should not allow more than 4 players") };
+        let Err(_) = world.add_player() else {
+            panic!("Should not allow more than 4 players")
+        };
 
         // Removing a player stops their ants from moving but doesn't affect other players
         world.remove_player(1);

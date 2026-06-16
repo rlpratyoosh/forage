@@ -1,4 +1,4 @@
-use wincode::{ SchemaRead, SchemaWrite };
+use wincode::{SchemaRead, SchemaWrite};
 
 #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
 pub enum ServerPacket {
@@ -7,7 +7,7 @@ pub enum ServerPacket {
         map_area: u64,
         no_of_chunks: u32,
         chunks_per_player: u16,
-        snapshots: Vec<ChunkSnapshot>
+        snapshots: Vec<ChunkSnapshot>,
     },
     Snapshot(ChunkSnapshot),
     Delta(ChunkDelta),
@@ -17,7 +17,7 @@ pub enum ServerPacket {
 pub struct ChunkSnapshot {
     pub chunk_idx: u32,
     pub ant_bitboards: [u64; 16],
-    pub pheromone_strengths: [u8; 1024], 
+    pub pheromone_strengths: [u8; 1024],
     pub food_quantities: Vec<(u16, u8)>,
 }
 
@@ -35,10 +35,13 @@ pub enum ClientPacket {
     UpdateViewport {
         chunks: Vec<u32>,
     },
-    SpawnFood { chunk_idx: u32, local_idx: u16, quantity: u8 },
+    SpawnFood {
+        chunk_idx: u32,
+        local_idx: u16,
+        quantity: u8,
+    },
     Quit,
 }
-
 
 #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
 pub enum Error {
@@ -77,7 +80,10 @@ mod tests {
         };
 
         let encoded = wincode::serialize(&packet).unwrap();
-        println!("Encoded Welcome ServerPacket Size: {:.2}KB", encoded.len() as f32 / 1024.0);
+        println!(
+            "Encoded Welcome ServerPacket Size: {:.2}KB",
+            encoded.len() as f32 / 1024.0
+        );
         let decoded = wincode::deserialize::<ServerPacket>(&encoded).unwrap();
         assert_eq!(packet, decoded);
     }
@@ -92,7 +98,10 @@ mod tests {
         });
 
         let encoded = wincode::serialize(&packet).unwrap();
-        println!("Encoded Snapshot ServerPacket Size: {:.2}KB", encoded.len() as f32 / 1024.0);
+        println!(
+            "Encoded Snapshot ServerPacket Size: {:.2}KB",
+            encoded.len() as f32 / 1024.0
+        );
         let decoded = wincode::deserialize::<ServerPacket>(&encoded).unwrap();
         assert_eq!(packet, decoded);
     }
@@ -107,7 +116,10 @@ mod tests {
         });
 
         let encoded = wincode::serialize(&packet).unwrap();
-        println!("Encoded Delta ServerPacket Size: {:.2}KB", encoded.len() as f32 / 1024.0);
+        println!(
+            "Encoded Delta ServerPacket Size: {:.2}KB",
+            encoded.len() as f32 / 1024.0
+        );
         let decoded = wincode::deserialize::<ServerPacket>(&encoded).unwrap();
         assert_eq!(packet, decoded);
     }
@@ -132,4 +144,3 @@ mod tests {
         assert_eq!(decoded, packet);
     }
 }
-

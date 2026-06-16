@@ -1,5 +1,5 @@
-use std::time::Instant;
 use forage_core::{Settings, World};
+use std::time::Instant;
 
 fn run_benchmark(player_count: usize, ants_per_nest: u32, ticks: usize) {
     let settings = Settings::new(player_count, ants_per_nest, 0.05);
@@ -20,7 +20,6 @@ fn run_benchmark(player_count: usize, ants_per_nest: u32, ticks: usize) {
         }
     }
 
-
     // // Warm up
     // for _ in 0..1000 {
     //     world.tick();
@@ -39,7 +38,7 @@ fn run_benchmark(player_count: usize, ants_per_nest: u32, ticks: usize) {
         world.tick();
         if i % 100 == 99 {
             let elapsed = start.elapsed();
-            println!("Ticks: {}", i+1);
+            println!("Ticks: {}", i + 1);
             println!("Elapsed: {:.3?}", elapsed);
 
             let total_ants = player_count * ants_per_nest as usize;
@@ -51,9 +50,7 @@ fn run_benchmark(player_count: usize, ants_per_nest: u32, ticks: usize) {
 
             println!(
                 "Ant Updates / Second: {:.2} million",
-                (total_ants * 100) as f64
-                    / elapsed.as_secs_f64()
-                    / 1_000_000.0
+                (total_ants * 100) as f64 / elapsed.as_secs_f64() / 1_000_000.0
             );
             println!("");
             start = Instant::now();
