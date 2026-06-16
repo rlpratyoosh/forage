@@ -20,7 +20,7 @@ const ANTS_PER_PLAYER: u32 = 500;
 const ANT_DENSITY: f32 = 0.05;
 const TICKS_PER_SECOND: u8 = 10;
 
-enum EngineCommad {
+enum EngineCommand {
     AddPlayer(oneshot::Sender<Result<u32, NetError>>),
     RemovePlayer(u32),
     GetSnapshot(u32, oneshot::Sender<Result<ChunkSnapshot, NetError>>),
@@ -33,7 +33,7 @@ enum EngineCommad {
 }
 
 struct ServerState {
-    engine_tx: mpsc::Sender<EngineCommad>,
+    engine_tx: mpsc::Sender<EngineCommand>,
     chunk_broadcasts: Vec<broadcast::Sender<ChunkDelta>>,
     map_area: u64,
     no_of_chunks: u32,
@@ -44,7 +44,7 @@ type WsSender = futures_util::stream::SplitSink<WebSocket, Message>;
 
 #[tokio::main]
 async fn main() {
-    let (engine_tx, engine_rx) = mpsc::channel::<EngineCommad>(1024);
+    let (engine_tx, engine_rx) = mpsc::channel::<EngineCommand>(1024);
 
     let settings = Settings::new(PLAYER_COUNT, ANTS_PER_PLAYER, ANT_DENSITY);
     let no_of_chunks = settings.get_no_of_chunks() as usize;
@@ -107,7 +107,7 @@ macro_rules! send_packet {
 macro_rules! cleanup_player {
     ($nest_id:expr, $engine_tx:expr) => {{
         if let Some(id) = $nest_id {
-            let _ = $engine_tx.send(EngineCommad::RemovePlayer(id)).await;
+            let _ = $engine_tx.send(EngineCommand::RemovePlayer(id)).await;
         }
     }};
 }
@@ -181,7 +181,7 @@ async fn process_join(
     let engine_tx = &server_state.engine_tx;
     let (tx, rx) = oneshot::channel();
 
-    if engine_tx.send(EngineCommad::AddPlayer(tx)).await.is_err() {
+    if engine_tx.send(EngineCommand::AddPlayer(tx)).await.is_err() {
         return send_packet!(sender, &NetError::EngineFailure);
     }
 
@@ -202,7 +202,7 @@ async fn process_join(
             let (snapshot_tx, snapshot_rx) = oneshot::channel();
 
             if engine_tx
-                .send(EngineCommad::GetSnapshot(chunk_id as u32, snapshot_tx))
+                .send(EngineCommand::GetSnapshot(chunk_id as u32, snapshot_tx))
                 .await
                 .is_ok()
             {
@@ -276,11 +276,11 @@ async fn spawn_food(
     chunk_idx: u32,
     local_idx: u16,
     quantity: u8,
-    engine_tx: &mpsc::Sender<EngineCommad>,
+    engine_tx: &mpsc::Sender<EngineCommand>,
 ) -> bool {
     let (tx, rx) = oneshot::channel();
     if engine_tx
-        .send(EngineCommad::SpawnFood {
+        .send(EngineCommand::SpawnFood {
             chunk_idx,
             local_idx,
             quantity,
@@ -300,7 +300,7 @@ async fn spawn_food(
 }
 
 fn run_engine(
-    mut engine_rx: mpsc::Receiver<EngineCommad>,
+    mut engine_rx: mpsc::Receiver<EngineCommand>,
     chunk_broadcasts_engine: Vec<broadcast::Sender<ChunkDelta>>,
     settings: Settings,
 ) {
@@ -314,20 +314,20 @@ fn run_engine(
 
         while let Ok(cmd) = engine_rx.try_recv() {
             match cmd {
-                EngineCommad::AddPlayer(sender) => {
+                EngineCommand::AddPlayer(sender) => {
                     let _ = match world.add_player() {
                         Ok(id) => sender.send(Ok(id as u32)),
                         Err(e) => sender.send(Err(e)),
                     };
                 }
-                EngineCommad::RemovePlayer(id) => {
+                EngineCommand::RemovePlayer(id) => {
                     let _ = world.remove_player(id as usize);
                 }
-                EngineCommad::GetSnapshot(id, sender) => {
+                EngineCommand::GetSnapshot(id, sender) => {
                     let snapshot = world.get_snapshot(id);
                     let _ = sender.send(snapshot);
                 }
-                EngineCommad::SpawnFood {
+                EngineCommand::SpawnFood {
                     chunk_idx,
                     local_idx,
                     quantity,
