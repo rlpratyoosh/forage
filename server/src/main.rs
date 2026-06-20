@@ -24,7 +24,7 @@ enum EngineCommand {
     AddPlayer(oneshot::Sender<Result<u32, NetError>>),
     RemovePlayer(u32),
     GetSnapshot(u32, oneshot::Sender<Result<ChunkSnapshot, NetError>>),
-    GetTickCount(oneshot::Sender<u8>),
+    GetTickCount(oneshot::Sender<u64>),
     SpawnFood {
         chunk_idx: u32,
         local_idx: u16,

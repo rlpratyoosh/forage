@@ -221,7 +221,7 @@ pub struct World {
     nest_pool: NestPool,
     settings: Settings,
     random_generator: Rng,
-    tick_count: u8,
+    tick_count: u64,
 }
 
 impl World {
@@ -301,9 +301,8 @@ impl World {
             food_pool,
             random_generator,
         );
-        if *tick_count == 10 {
+        if *tick_count % 10 == 0 {
             World::evaporate(pheromone_pool, 1);
-            *tick_count = 0;
         }
     }
 
@@ -650,7 +649,7 @@ impl World {
         Ok(())
     }
 
-    pub fn get_tick_count(&self) -> u8 {
+    pub fn get_tick_count(&self) -> u64 {
         self.tick_count
     }
 
