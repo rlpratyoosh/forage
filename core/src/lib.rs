@@ -221,7 +221,7 @@ pub struct World {
     nest_pool: NestPool,
     settings: Settings,
     random_generator: Rng,
-    tick_count: u16,
+    tick_count: u8,
 }
 
 impl World {
@@ -648,6 +648,10 @@ impl World {
         }
 
         Ok(())
+    }
+
+    pub fn get_tick_count(&self) -> u8 {
+        self.tick_count
     }
 
     /// Returns an immutable slice of all ant global map positions.

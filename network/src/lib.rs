@@ -8,6 +8,7 @@ pub enum ServerPacket {
         no_of_chunks: u32,
         chunks_per_player: u16,
         snapshots: Vec<ChunkSnapshot>,
+        tick_count: u8,
     },
     Snapshot(ChunkSnapshot),
     Delta(ChunkDelta),
