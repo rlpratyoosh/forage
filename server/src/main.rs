@@ -141,7 +141,10 @@ async fn handle_connection(socket: WebSocket, server_state: Arc<ServerState>) {
                         }
                     }
                     ClientPacket::UpdateViewport { chunks } => {
-                        update_viewport(&mut broadcast_receivers, chunks, &server_state);
+                        if !update_viewport(&mut sender, &mut broadcast_receivers, chunks, &server_state).await {
+                            cleanup_player!(nest_id, engine_tx);
+                            break;
+                        };
                     }
                     ClientPacket::SpawnFood { chunk_idx, local_idx, quantity } => {
                         if !spawn_food(&mut sender, chunk_idx, local_idx, quantity, engine_tx).await {
@@ -245,11 +248,12 @@ async fn process_join(
     }
 }
 
-fn update_viewport(
+async fn update_viewport(
+    sender: &mut WsSender,
     broadcast_receivers: &mut StreamMap<usize, BroadcastStream<ChunkDelta>>,
     chunks: Vec<u32>,
     server_state: &Arc<ServerState>,
-) {
+) -> bool {
     let mut keys_to_remove = Vec::new();
     for key in broadcast_receivers.keys() {
         if !chunks.contains(&(*key as u32)) {
@@ -261,14 +265,47 @@ fn update_viewport(
         broadcast_receivers.remove(&key);
     }
 
+    let engine_tx = &server_state.engine_tx;
+    let mut snapshot_receivers = Vec::new();
+
     for chunk in chunks {
         let chunk = chunk as usize;
         if !broadcast_receivers.contains_key(&chunk) {
             let broadcast_rx =
                 BroadcastStream::new(server_state.chunk_broadcasts[chunk].subscribe());
             broadcast_receivers.insert(chunk, broadcast_rx);
+
+            let (snapshot_tx, snapshot_rx) = oneshot::channel();
+
+            if engine_tx
+                .send(EngineCommand::GetSnapshot(chunk as u32, snapshot_tx))
+                .await
+                .is_ok()
+            {
+                snapshot_receivers.push(snapshot_rx);
+            } else {
+                let _ = send_packet!(sender, &NetError::EngineFailure);
+                return false;
+            }
         }
     }
+
+    for result in futures::future::join_all(snapshot_receivers).await {
+        match result {
+            Ok(Ok(snapshot)) => {
+                let _ = send_packet!(sender, &ServerPacket::Snapshot(snapshot));
+            }
+            Ok(Err(_)) => {
+                let _ = send_packet!(sender, &NetError::BadRequest);
+            }
+            Err(_) => {
+                let _ = send_packet!(sender, &NetError::EngineFailure);
+                return false;
+            }
+        }
+    }
+
+    true
 }
 
 async fn spawn_food(
