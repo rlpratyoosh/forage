@@ -870,6 +870,7 @@ impl World {
 
         Ok(ChunkDelta {
             chunk_idx,
+            tick_count: self.tick_count,
             ant_bitboards,
             pheromone_bitboards,
             dirty_food,
