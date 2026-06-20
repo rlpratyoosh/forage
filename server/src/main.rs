@@ -226,8 +226,12 @@ async fn process_join(
     for result in futures::future::join_all(snapshot_receivers).await {
         match result {
             Ok(Ok(snapshot)) => snapshots.push(snapshot),
-            _ => {
+            Ok(Err(_)) => {
                 let _ = send_packet!(sender, &NetError::ServerFailure);
+                return false;
+            }
+            Err(_) => {
+                let _ = send_packet!(sender, &NetError::EngineFailure);
                 return false;
             }
         }
