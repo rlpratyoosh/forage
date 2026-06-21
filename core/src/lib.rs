@@ -221,7 +221,6 @@ pub struct World {
     nest_pool: NestPool,
     settings: Settings,
     random_generator: Rng,
-    tick_count: u64,
 }
 
 impl World {
@@ -259,7 +258,6 @@ impl World {
             nest_pool,
             settings,
             random_generator,
-            tick_count: 0,
         }
     }
 
@@ -290,9 +288,7 @@ impl World {
             ref settings,
             ref mut food_pool,
             ref mut random_generator,
-            ref mut tick_count,
         } = self;
-        *tick_count += 1;
         World::move_ants(
             ant_pool,
             pheromone_pool,
@@ -647,10 +643,6 @@ impl World {
         Ok(())
     }
 
-    pub fn get_tick_count(&self) -> u64 {
-        self.tick_count
-    }
-
     /// Returns an immutable slice of all ant global map positions.
     ///
     /// # Examples
@@ -868,7 +860,6 @@ impl World {
 
         Ok(ChunkDelta {
             chunk_idx,
-            tick_count: self.tick_count,
             ant_bitboards,
             pheromone_bitboards,
             dirty_food,

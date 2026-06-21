@@ -16,7 +16,6 @@ struct ClientState {
     map_area: u64,
     no_of_chunks: u32,
     chunks_per_player: u16,
-    tick_count: u64,
     last_tick_time: f64,
     chunks: HashMap<u32, ClientChunk>,
     render_buffer: Vec<f32>,
@@ -29,7 +28,6 @@ impl Default for ClientState {
             map_area: 0,
             no_of_chunks: 0,
             chunks_per_player: 0,
-            tick_count: 0,
             last_tick_time: 0.0,
             chunks: HashMap::new(),
             render_buffer: Vec::new(),
@@ -81,13 +79,11 @@ impl GameClient {
                                 no_of_chunks,
                                 chunks_per_player,
                                 snapshots,
-                                tick_count,
                             } => {
                                 mutable_state.nest_idx = nest_idx;
                                 mutable_state.map_area = map_area;
                                 mutable_state.no_of_chunks = no_of_chunks;
                                 mutable_state.chunks_per_player = chunks_per_player;
-                                mutable_state.tick_count = tick_count;
                                 for snapshot in snapshots {
                                     let mut food_quantities = [0u8; 1024];
 
@@ -131,10 +127,6 @@ impl GameClient {
                                 {
                                     client_chunk.prev_ant_bitboards = client_chunk.ant_bitboards;
                                     client_chunk.ant_bitboards = delta.ant_bitboards;
-                                    if delta.tick_count > mutable_state.tick_count {
-                                        mutable_state.tick_count = delta.tick_count;
-                                        mutable_state.last_tick_time = js_sys::Date::now();
-                                    }
 
                                 let evaporate = 1;
 

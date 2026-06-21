@@ -25,7 +25,6 @@ enum EngineCommand {
     AddPlayer(oneshot::Sender<Result<u32, NetError>>),
     RemovePlayer(u32),
     GetSnapshot(u32, oneshot::Sender<Result<ChunkSnapshot, NetError>>),
-    GetTickCount(oneshot::Sender<u64>),
     SpawnFood {
         chunk_idx: u32,
         local_idx: u16,
@@ -239,28 +238,12 @@ async fn process_join(
         }
     }
 
-    let (tx, rx) = oneshot::channel();
-    if engine_tx
-        .send(EngineCommand::GetTickCount(tx))
-        .await
-        .is_err()
-    {
-        let _ = send_packet!(sender, &NetError::EngineFailure);
-        return false;
-    }
-
-    let Ok(tick_count) = rx.await else {
-        let _ = send_packet!(sender, &NetError::EngineFailure);
-        return false;
-    };
-
     let packet = ServerPacket::Welcome {
         nest_idx: id,
         map_area: server_state.map_area,
         no_of_chunks: server_state.no_of_chunks,
         chunks_per_player: server_state.chunks_per_player,
         snapshots,
-        tick_count,
     };
 
     if send_packet!(sender, &packet) {
@@ -388,9 +371,6 @@ fn run_engine(
                 EngineCommand::GetSnapshot(id, sender) => {
                     let snapshot = world.get_snapshot(id);
                     let _ = sender.send(snapshot);
-                }
-                EngineCommand::GetTickCount(sender) => {
-                    let _ = sender.send(world.get_tick_count());
                 }
                 EngineCommand::SpawnFood {
                     chunk_idx,

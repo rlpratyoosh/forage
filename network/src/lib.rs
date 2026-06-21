@@ -8,7 +8,6 @@ pub enum ServerPacket {
         no_of_chunks: u32,
         chunks_per_player: u16,
         snapshots: Vec<ChunkSnapshot>,
-        tick_count: u64,
     },
     Snapshot(ChunkSnapshot),
     Delta(ChunkDelta),
@@ -25,7 +24,6 @@ pub struct ChunkSnapshot {
 #[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Clone)]
 pub struct ChunkDelta {
     pub chunk_idx: u32,
-    pub tick_count: u64,
     pub ant_bitboards: [u64; 16],
     pub pheromone_bitboards: [u64; 16],
     pub dirty_food: Vec<(u16, u8)>,
