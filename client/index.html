@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Countless | Engine MVP</title>
+    <style>
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background-color: #0a0a0a; overflow: hidden; 
+            font-family: 'Courier New', Courier, monospace; color: #fff; 
+        }
+        #gameCanvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
+
+        #ui-layer { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            pointer-events: none; display: flex; flex-direction: column; 
+            justify-content: space-between; padding: 20px; box-sizing: border-box; 
+        }
+        .hud-text { font-size: 14px; color: #555; text-shadow: 1px 1px 0 #000; letter-spacing: 1px; }
+        .hud-status { color: #4CAF50; font-weight: bold; }
+
+        #loading { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+            font-size: 18px; letter-spacing: 4px; color: #4CAF50; 
+            text-shadow: 0 0 10px rgba(76, 175, 80, 0.3); transition: opacity 0.5s ease; 
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui-layer">
+        <div class="hud-text">COUNTLESS ENGINE // V0.1</div>
+        <div class="hud-text">STATUS: <span class="hud-status" id="status">BOOTING WASM...</span></div>
+        <div style="margin-top: 20px; background: rgba(0,0,0,0.7); padding: 15px; border: 1px solid #444; width: 200px; border-radius: 4px; pointer-events: auto;">
+            <div class="hud-text" style="margin-bottom: 10px; color: #4CAF50; font-weight: bold;">SPAWN FOOD</div>
+            <input type="range" id="foodAmount" min="2" max="254" step="2" value="100" style="width: 100%; cursor: pointer;">
+            <div class="hud-text" style="margin-top: 5px; margin-bottom: 10px;">AMOUNT: <span id="foodAmountLabel" style="color: #fff;">100</span></div>
+            <button id="spawnBtn" style="width: 100%; padding: 8px; background: #4CAF50; border: none; border-radius: 2px; color: #111; cursor: pointer; font-family: inherit; font-weight: bold; letter-spacing: 1px; transition: background 0.2s;">SPAWN AT CENTER</button>
+            <div class="hud-text" style="font-size: 10px; margin-top: 8px; color: #888; text-align: center;">OR RIGHT-CLICK ON MAP</div>
+        </div>
+    </div>
+    <div id="loading">ESTABLISHING NEST LINK...</div>
+
+    <script type="module">
+        import init, { GameClient } from './pkg/forage_client.js';
+
+        async function boot() {
+            try {
+                const wasm = await init();
+
+                document.getElementById('loading').style.opacity = '0';
+                document.getElementById('status').innerText = 'CONNECTED';
+
+                const canvas = document.getElementById('gameCanvas');
+                const ctx = canvas.getContext('2d', { alpha: false }); // Optimize hardware pass
+
+                function resize() {
+                    canvas.width = window.innerWidth;
+                    canvas.height = window.innerHeight;
+                }
+                window.addEventListener('resize', resize);
+                resize();
+
+                // Connect back to the Axum WebSocket we are being served from
+                const wsUrl = `ws://${window.location.host}/join`;
+                const client = new GameClient(wsUrl);
+
+                let camX = null;
+                let camY = null;
+                let zoom = 1.0;
+                const keys = {};
+
+                window.addEventListener('keydown', e => keys[e.key] = true);
+                window.addEventListener('keyup', e => keys[e.key] = false);
+
+                const foodSlider = document.getElementById('foodAmount');
+                const foodLabel = document.getElementById('foodAmountLabel');
+                const spawnBtn = document.getElementById('spawnBtn');
+
+                foodSlider.addEventListener('input', (e) => {
+                    foodLabel.innerText = e.target.value;
+                });
+
+                spawnBtn.addEventListener('click', () => {
+                    if (camX !== null && camY !== null) {
+                        const amount = parseInt(foodSlider.value, 10);
+                        const centerX = camX + (canvas.width / 2) / zoom;
+                        const centerY = camY + (canvas.height / 2) / zoom;
+                        client.spawn_food(centerX, centerY, amount);
+                    }
+                });
+
+                window.addEventListener('contextmenu', e => {
+                    e.preventDefault();
+                    if (camX !== null && camY !== null) {
+                        const amount = parseInt(foodSlider.value, 10);
+                        const worldX = camX + (e.clientX / zoom);
+                        const worldY = camY + (e.clientY / zoom);
+                        client.spawn_food(worldX, worldY, amount);
+                    }
+                });
+
+                window.addEventListener('wheel', e => {
+                    const zoomFactor = 1.1;
+                    const oldZoom = zoom;
+                    if (e.deltaY < 0) {
+                        zoom *= zoomFactor;
+                    } else {
+                        zoom /= zoomFactor;
+                    }
+                    zoom = Math.max(0.1, Math.min(zoom, 10.0));
+
+                    const centerX = canvas.width / 2;
+                    const centerY = canvas.height / 2;
+
+                    if (camX !== null && camY !== null) {
+                        camX += (centerX / oldZoom) - (centerX / zoom);
+                        camY += (centerY / oldZoom) - (centerY / zoom);
+                    }
+                });
+
+                function loop() {
+                    if (camX === null && client.is_ready()) {
+                        camX = client.get_initial_cam_x() - (canvas.width / 2) / zoom;
+                        camY = client.get_initial_cam_y() - (canvas.height / 2) / zoom;
+                    }
+
+                    if (camX === null) {
+                        requestAnimationFrame(loop);
+                        return;
+                    }
+
+                    const speed = 12.0 / zoom;
+                    if (keys['ArrowUp'] || keys['w']) camY -= speed;
+                    if (keys['ArrowDown'] || keys['s']) camY += speed;
+                    if (keys['ArrowLeft'] || keys['a']) camX -= speed;
+                    if (keys['ArrowRight'] || keys['d']) camX += speed;
+
+                    const viewportWidth = canvas.width / zoom;
+                    const viewportHeight = canvas.height / zoom;
+                    client.update_render_state(camX, camY, viewportWidth, viewportHeight);
+
+                    ctx.fillStyle = '#1e1814';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    ctx.save();
+                    ctx.scale(zoom, zoom);
+                    ctx.translate(-camX, -camY);
+
+                    const pointer = client.get_buffer_pointer() / 4; // Divide by 4 to get f32/u32 index
+                    const length = client.get_buffer_length();
+
+                    const f32View = new Float32Array(wasm.memory.buffer);
+                    const u32View = new Uint32Array(wasm.memory.buffer);
+
+                    for (let i = 0; i < length; i += 3) {
+                        let x = f32View[pointer + i];
+                        let y = f32View[pointer + i + 1];
+                        let colorInt = u32View[pointer + i + 2];
+
+                        // Unpack the 32-bit color
+                        let r = (colorInt >>> 24) & 255;
+                        let g = (colorInt >>> 16) & 255;
+                        let b = (colorInt >>> 8) & 255;
+                        let a = (colorInt & 255) / 255.0;
+
+                        ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
+
+                        if (r === 0 && g === 0 && b === 0 && a === 1.0) {
+                            // Small square for ant
+                            ctx.fillRect(x + 12, y + 12, 8, 8);
+                        } else {
+                            ctx.fillRect(x, y, 32, 32); 
+                        }
+                    }
+
+                    let mapSize = client.get_map_width_pixels();
+                    ctx.strokeStyle = 'rgba(255, 50, 50, 0.8)'; // Neon Red
+                    ctx.lineWidth = 10;
+                    ctx.strokeRect(0, 0, mapSize, mapSize);
+
+                    ctx.restore();
+                    requestAnimationFrame(loop);
+                }
+
+                requestAnimationFrame(loop);
+
+            } catch (error) {
+                console.error("WASM Boot Failure:", error);
+                document.getElementById('status').innerText = 'CRITICAL FAILURE';
+                document.getElementById('status').style.color = '#ff3333';
+                document.getElementById('loading').innerText = 'WASM MODULE NOT FOUND';
+                document.getElementById('loading').style.color = '#ff3333';
+            }
+        }
+
+        boot();
+    </script>
+</body>
+</html>

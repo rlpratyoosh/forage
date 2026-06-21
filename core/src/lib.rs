@@ -301,9 +301,7 @@ impl World {
             food_pool,
             random_generator,
         );
-        if *tick_count % 10 == 0 {
-            World::evaporate(pheromone_pool, 1);
-        }
+        World::evaporate(pheromone_pool, 1);
     }
 
     fn move_ants(

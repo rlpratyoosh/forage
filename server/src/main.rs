@@ -14,6 +14,7 @@ use futures_util::{sink::SinkExt, stream::StreamExt};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::{StreamMap, wrappers::BroadcastStream};
+use tower_http::services::ServeDir;
 
 const PLAYER_COUNT: usize = 1000;
 const ANTS_PER_PLAYER: u32 = 500;
@@ -79,6 +80,7 @@ async fn main() {
     let server = Router::new()
         .route("/health", routing::get("Online!"))
         .route("/join", routing::any(join_handler))
+        .fallback_service(ServeDir::new("client"))
         .with_state(server_state);
 
     axum::serve(listener, server).await.unwrap();
@@ -238,7 +240,11 @@ async fn process_join(
     }
 
     let (tx, rx) = oneshot::channel();
-    if engine_tx.send(EngineCommand::GetTickCount(tx)).await.is_err() {
+    if engine_tx
+        .send(EngineCommand::GetTickCount(tx))
+        .await
+        .is_err()
+    {
         let _ = send_packet!(sender, &NetError::EngineFailure);
         return false;
     }
@@ -366,6 +372,8 @@ fn run_engine(
     loop {
         let start = std::time::Instant::now();
 
+        world.tick();
+
         while let Ok(cmd) = engine_rx.try_recv() {
             match cmd {
                 EngineCommand::AddPlayer(sender) => {
@@ -395,8 +403,6 @@ fn run_engine(
                 }
             };
         }
-
-        world.tick();
 
         for i in 0..no_of_chunks {
             let broadcast = &chunk_broadcasts_engine[i];

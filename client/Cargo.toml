@@ -1,0 +1,14 @@
+[package]
+name = "forage-client"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+forage-network = { path = "../network" }
+wasm-bindgen = "0.2.125"
+web-sys = { version = "0.3.102", features = ["WebSocket", "BinaryType", "Event", "MessageEvent"] }
+js-sys = { version = "0.3.102" }
+wincode = { version = "0.5.5", features = [ "alloc" ] }
