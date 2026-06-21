@@ -6,6 +6,7 @@ use wasm_bindgen::prelude::*;
 
 struct ClientChunk {
     ant_bitboards: [u64; 16],
+    ant_transitions: Vec<(u16, u16)>,
     pheromone_strengths: [u8; 1024],
     food_quantities: [u8; 1024],
 }
@@ -17,6 +18,7 @@ struct ClientState {
     chunks_per_player: u16,
     chunks: HashMap<u32, ClientChunk>,
     render_buffer: Vec<f32>,
+    last_tick_time: f64,
 }
 
 impl Default for ClientState {
@@ -28,6 +30,7 @@ impl Default for ClientState {
             chunks_per_player: 0,
             chunks: HashMap::new(),
             render_buffer: Vec::new(),
+            last_tick_time: 0.0,
         }
     }
 }
@@ -88,8 +91,20 @@ impl GameClient {
                                         food_quantities[idx as usize] = quantity;
                                     }
 
+                                    let mut transitions = Vec::new();
+                                    for i in 0..16 {
+                                        let mut b = snapshot.ant_bitboards[i];
+                                        while b != 0 {
+                                            let bit_idx = b.trailing_zeros();
+                                            let local_idx = ((i << 6) + bit_idx as usize) as u16;
+                                            transitions.push((local_idx, local_idx));
+                                            b &= b - 1;
+                                        }
+                                    }
+
                                     let client_chunk = ClientChunk {
                                         ant_bitboards: snapshot.ant_bitboards,
+                                        ant_transitions: transitions,
                                         pheromone_strengths: snapshot.pheromone_strengths,
                                         food_quantities,
                                     };
@@ -106,8 +121,20 @@ impl GameClient {
                                     food_quantities[idx as usize] = quantity;
                                 }
 
+                                let mut transitions = Vec::new();
+                                for i in 0..16 {
+                                    let mut b = snapshot.ant_bitboards[i];
+                                    while b != 0 {
+                                        let bit_idx = b.trailing_zeros();
+                                        let local_idx = ((i << 6) + bit_idx as usize) as u16;
+                                        transitions.push((local_idx, local_idx));
+                                        b &= b - 1;
+                                    }
+                                }
+
                                 let client_chunk = ClientChunk {
                                     ant_bitboards: snapshot.ant_bitboards,
+                                    ant_transitions: transitions,
                                     pheromone_strengths: snapshot.pheromone_strengths,
                                     food_quantities,
                                 };
@@ -120,7 +147,77 @@ impl GameClient {
                                 if let Some(client_chunk) =
                                     mutable_state.chunks.get_mut(&delta.chunk_idx)
                                 {
+                                    let mut unmatched_old = client_chunk.ant_bitboards;
+                                    let mut unmatched_new = delta.ant_bitboards;
                                     client_chunk.ant_bitboards = delta.ant_bitboards;
+
+                                    let mut transitions = Vec::with_capacity(64);
+
+                                    // Pass 1: Exact matches
+                                    for i in 0..16 {
+                                        let mut exact = unmatched_old[i] & unmatched_new[i];
+                                        unmatched_old[i] &= !exact;
+                                        unmatched_new[i] &= !exact;
+                                        while exact != 0 {
+                                            let bit_idx = exact.trailing_zeros();
+                                            let local_idx = ((i << 6) + bit_idx as usize) as u16;
+                                            transitions.push((local_idx, local_idx));
+                                            exact &= exact - 1;
+                                        }
+                                    }
+
+                                    // Pass 2: Neighbors
+                                    for i in 0..16 {
+                                        let mut new_bits = unmatched_new[i];
+                                        while new_bits != 0 {
+                                            let bit_idx = new_bits.trailing_zeros();
+                                            let new_local_idx =
+                                                ((i << 6) + bit_idx as usize) as u16;
+
+                                            let new_col = (new_local_idx % 32) as i32;
+                                            let new_row = (new_local_idx / 32) as i32;
+
+                                            let mut found_old_idx = new_local_idx;
+
+                                            for dr in -1..=1 {
+                                                for dc in -1..=1 {
+                                                    if dr == 0 && dc == 0 {
+                                                        continue;
+                                                    }
+                                                    let nr = new_row + dr;
+                                                    let nc = new_col + dc;
+                                                    if nr >= 0 && nr < 32 && nc >= 0 && nc < 32 {
+                                                        let old_idx = (nr * 32 + nc) as usize;
+                                                        let old_board_idx = old_idx >> 6;
+                                                        let old_bit_idx = old_idx & 63;
+                                                        if (unmatched_old[old_board_idx]
+                                                            >> old_bit_idx)
+                                                            & 1
+                                                            == 1
+                                                        {
+                                                            unmatched_old[old_board_idx] &=
+                                                                !(1 << old_bit_idx);
+                                                            found_old_idx = old_idx as u16;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                if found_old_idx != new_local_idx {
+                                                    break;
+                                                }
+                                            }
+
+                                            transitions.push((found_old_idx, new_local_idx));
+                                            new_bits &= new_bits - 1;
+                                        }
+                                    }
+
+                                    client_chunk.ant_transitions = transitions;
+
+                                    let now = js_sys::Date::now();
+                                    if now - mutable_state.last_tick_time > 50.0 {
+                                        mutable_state.last_tick_time = now;
+                                    }
 
                                     let evaporate = 1;
 
@@ -289,6 +386,15 @@ impl GameClient {
             }
         }
 
+        let now = js_sys::Date::now();
+        let mut progress = (now - state.last_tick_time) / 100.0; // 100ms per tick
+        if progress > 1.0 {
+            progress = 1.0;
+        }
+        if progress < 0.0 {
+            progress = 0.0;
+        }
+
         let total_nests = state.no_of_chunks / (state.chunks_per_player as u32);
 
         for nest_id in 0..total_nests {
@@ -355,25 +461,24 @@ impl GameClient {
                         }
                     }
 
-                    for (board_idx, mut board) in chunk.ant_bitboards.into_iter().enumerate() {
-                        while board != 0 {
-                            let bit_idx = board.trailing_zeros();
-                            let local_idx = (board_idx << 6) + bit_idx as usize;
+                    for &(old_idx, new_idx) in &chunk.ant_transitions {
+                        let prev_col = (old_idx % 32) as f32;
+                        let prev_row = (old_idx / 32) as f32;
 
-                            let local_col = (local_idx % 32) as f32;
-                            let local_row = (local_idx / 32) as f32;
+                        let local_col = (new_idx % 32) as f32;
+                        let local_row = (new_idx / 32) as f32;
 
-                            let ant_abs_x = chunk_pixel_x + (local_col * 32.0);
-                            let ant_abs_y = chunk_pixel_y + (local_row * 32.0);
+                        let interp_col = prev_col + (local_col - prev_col) * progress as f32;
+                        let interp_row = prev_row + (local_row - prev_row) * progress as f32;
 
-                            let color = pack_color(0, 0, 0, 255); // Black
+                        let ant_abs_x = chunk_pixel_x + (interp_col * 32.0);
+                        let ant_abs_y = chunk_pixel_y + (interp_row * 32.0);
 
-                            state.render_buffer.push(ant_abs_x);
-                            state.render_buffer.push(ant_abs_y);
-                            state.render_buffer.push(color);
+                        let color = pack_color(0, 0, 0, 255); // Black
 
-                            board &= board - 1;
-                        }
+                        state.render_buffer.push(ant_abs_x);
+                        state.render_buffer.push(ant_abs_y);
+                        state.render_buffer.push(color);
                     }
                 }
             }
