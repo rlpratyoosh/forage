@@ -10,6 +10,7 @@ use axum::{
 };
 use forage_core::{Settings, World};
 use forage_network::{ChunkSnapshot, ClientPacket, Error as NetError, ServerPacket};
+use forage_server::{info, error};
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -48,6 +49,15 @@ async fn main() {
     let (engine_tx, engine_rx) = mpsc::channel::<EngineCommand>(1024);
 
     let settings = Settings::new(PLAYER_COUNT, ANTS_PER_PLAYER, ANT_DENSITY);
+    info!(
+        "======= Settings ===========\nPlayer Count: {}\nAnts per Player: {}\nMap Area: {}\nNo of Chunks: {}\nChunks per Player: {}\n============================\n",
+        settings.get_player_count(),
+        ANTS_PER_PLAYER,
+        settings.get_map_area(),
+        settings.get_no_of_chunks(),
+        settings.get_chunks_per_player()
+    );
+
     let no_of_chunks = settings.get_no_of_chunks() as usize;
 
     let mut chunk_broadcasts = Vec::with_capacity(no_of_chunks);
@@ -70,9 +80,10 @@ async fn main() {
     let handle = std::thread::spawn(move || {
         run_engine(engine_rx, chunk_broadcasts_engine, settings);
     });
+    info!("Engine Started 🚒");
 
     let Ok(listener) = tokio::net::TcpListener::bind("127.0.0.1:8080").await else {
-        eprintln!("Failed to bind port 8080!");
+        error!("❗ Failed to bind port 8080!");
         return;
     };
 
@@ -80,9 +91,12 @@ async fn main() {
         .route("/health", routing::get("Online!"))
         .route("/join", routing::any(join_handler))
         .fallback_service(ServeDir::new("client"))
-        .with_state(server_state);
+        .with_state(server_state); 
+    info!("🟢 Server listening on port 8080\n🌐 Visit http://localhost::8080/\n");
 
-    axum::serve(listener, server).await.unwrap();
+    if axum::serve(listener, server).await.is_err() {
+        error!("❗ Server error!");
+    }
     let _ = handle.join();
 }
 
@@ -110,6 +124,7 @@ macro_rules! cleanup_player {
     ($nest_id:expr, $engine_tx:expr) => {{
         if let Some(id) = $nest_id {
             let _ = $engine_tx.send(EngineCommand::RemovePlayer(id)).await;
+            info!("🎮 Player with nest id {} disconnected!", id);
         }
     }};
 }
@@ -140,6 +155,9 @@ async fn handle_connection(socket: WebSocket, server_state: Arc<ServerState>) {
                         if !process_join(&mut sender, &mut broadcast_receivers, &mut nest_id, &server_state).await {
                             cleanup_player!(nest_id, engine_tx);
                             break;
+                        }
+                        if let Some(id) = nest_id {
+                            info!("🎮 Player joined! Nest id {} assigned!", id);
                         }
                     }
                     ClientPacket::UpdateViewport { chunks } => {
@@ -187,11 +205,22 @@ async fn process_join(
     let (tx, rx) = oneshot::channel();
 
     if engine_tx.send(EngineCommand::AddPlayer(tx)).await.is_err() {
-        return send_packet!(sender, &NetError::EngineFailure);
+        error!("❗ Engine down!");
+        let _ = send_packet!(sender, &NetError::EngineFailure);
+        return false;
     }
 
-    let Ok(Ok(id)) = rx.await else {
-        return send_packet!(sender, &NetError::EngineFailure);
+    let Ok(res) = rx.await else {
+        error!("❗ Engine down!");
+        let _ = send_packet!(sender, &NetError::EngineFailure);
+        return false;
+    };
+
+
+    let Ok(id) = res else {
+        error!("❗ Server Full!");
+        let _ = send_packet!(sender, &NetError::ServerFull);
+        return false;
     };
 
     let map_width_zeros = server_state.no_of_chunks.isqrt().trailing_zeros() as usize;
@@ -213,6 +242,7 @@ async fn process_join(
             {
                 snapshot_receivers.push(snapshot_rx);
             } else {
+                error!("❗ Engine down!");
                 let _ = send_packet!(sender, &NetError::EngineFailure);
                 return false;
             }
@@ -228,10 +258,12 @@ async fn process_join(
         match result {
             Ok(Ok(snapshot)) => snapshots.push(snapshot),
             Ok(Err(_)) => {
+                error!("❗ Server failure in calculating initial snapshot chunk ids!");
                 let _ = send_packet!(sender, &NetError::ServerFailure);
                 return false;
             }
             Err(_) => {
+                error!("❗ Engine down!");
                 let _ = send_packet!(sender, &NetError::EngineFailure);
                 return false;
             }
@@ -290,6 +322,7 @@ async fn update_viewport(
             {
                 snapshot_receivers.push(snapshot_rx);
             } else {
+                error!("❗ Engine down!");
                 let _ = send_packet!(sender, &NetError::EngineFailure);
                 return false;
             }
@@ -305,6 +338,7 @@ async fn update_viewport(
                 let _ = send_packet!(sender, &NetError::BadRequest);
             }
             Err(_) => {
+                error!("❗ Engine down!");
                 let _ = send_packet!(sender, &NetError::EngineFailure);
                 return false;
             }
@@ -332,6 +366,7 @@ async fn spawn_food(
         .await
         .is_err()
     {
+        error!("❗ Engine down!");
         let _ = send_packet!(sender, &NetError::EngineFailure);
         return false;
     }
@@ -351,6 +386,7 @@ fn run_engine(
     let mut world = World::new(settings);
     let millis_per_tick = 1000 / TICKS_PER_SECOND as u64;
     let duration_per_tick = std::time::Duration::from_millis(millis_per_tick);
+    info!("🌍 World started rotating at {} ticks/sec", TICKS_PER_SECOND);
 
     loop {
         let start = std::time::Instant::now();
@@ -397,8 +433,8 @@ fn run_engine(
 
         let elapsed = start.elapsed();
         if elapsed > duration_per_tick {
-            println!(
-                "Server lagging by {:.2}ms!",
+            error!(
+                "❗ Server lagging by {:.2}ms!",
                 (elapsed - duration_per_tick).as_secs_f64() * 1000.0
             );
             continue;
