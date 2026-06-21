@@ -9,7 +9,7 @@ use axum::{
     routing,
 };
 use forage_core::{Settings, World};
-use forage_network::{ChunkDelta, ChunkSnapshot, ClientPacket, Error as NetError, ServerPacket};
+use forage_network::{ChunkSnapshot, ClientPacket, Error as NetError, ServerPacket};
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -35,7 +35,7 @@ enum EngineCommand {
 
 struct ServerState {
     engine_tx: mpsc::Sender<EngineCommand>,
-    chunk_broadcasts: Vec<broadcast::Sender<ChunkDelta>>,
+    chunk_broadcasts: Vec<broadcast::Sender<Bytes>>,
     map_area: u64,
     no_of_chunks: u32,
     chunks_per_player: u16,
@@ -53,7 +53,7 @@ async fn main() {
     let mut chunk_broadcasts = Vec::with_capacity(no_of_chunks);
 
     for _ in 0..no_of_chunks {
-        let (tx, _) = broadcast::channel::<ChunkDelta>(16);
+        let (tx, _) = broadcast::channel::<Bytes>(16);
         chunk_broadcasts.push(tx);
     }
 
@@ -161,9 +161,9 @@ async fn handle_connection(socket: WebSocket, server_state: Arc<ServerState>) {
                 }
             }
 
-            Some((_, delta)) = broadcast_receivers.next(), if !broadcast_receivers.is_empty() => {
-                if let Ok(delta) = delta {
-                    if !send_packet!(sender, &ServerPacket::Delta(delta)) {
+            Some((_, bytes)) = broadcast_receivers.next(), if !broadcast_receivers.is_empty() => {
+                if let Ok(bytes) = bytes {
+                    if sender.send(Message::Binary(bytes)).await.is_err() {
                         cleanup_player!(nest_id, engine_tx);
                         break;
                     }
@@ -175,7 +175,7 @@ async fn handle_connection(socket: WebSocket, server_state: Arc<ServerState>) {
 
 async fn process_join(
     sender: &mut WsSender,
-    broadcast_receivers: &mut StreamMap<usize, BroadcastStream<ChunkDelta>>,
+    broadcast_receivers: &mut StreamMap<usize, BroadcastStream<Bytes>>,
     nest_id: &mut Option<u32>,
     server_state: &Arc<ServerState>,
 ) -> bool {
@@ -256,7 +256,7 @@ async fn process_join(
 
 async fn update_viewport(
     sender: &mut WsSender,
-    broadcast_receivers: &mut StreamMap<usize, BroadcastStream<ChunkDelta>>,
+    broadcast_receivers: &mut StreamMap<usize, BroadcastStream<Bytes>>,
     chunks: Vec<u32>,
     server_state: &Arc<ServerState>,
 ) -> bool {
@@ -344,7 +344,7 @@ async fn spawn_food(
 
 fn run_engine(
     mut engine_rx: mpsc::Receiver<EngineCommand>,
-    chunk_broadcasts_engine: Vec<broadcast::Sender<ChunkDelta>>,
+    chunk_broadcasts_engine: Vec<broadcast::Sender<Bytes>>,
     settings: Settings,
 ) {
     let no_of_chunks = settings.get_no_of_chunks() as usize;
@@ -388,7 +388,9 @@ fn run_engine(
             let broadcast = &chunk_broadcasts_engine[i];
             if broadcast.receiver_count() > 0 {
                 if let Ok(delta) = world.get_delta(i as u32) {
-                    let _ = broadcast.send(delta);
+                    if let Ok(bytes) = wincode::serialize(&ServerPacket::Delta(delta)) {
+                        let _ = broadcast.send(Bytes::from(bytes));
+                    }
                 }
             }
         }

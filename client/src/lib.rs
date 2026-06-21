@@ -6,7 +6,6 @@ use wasm_bindgen::prelude::*;
 
 struct ClientChunk {
     ant_bitboards: [u64; 16],
-    prev_ant_bitboards: [u64; 16],
     pheromone_strengths: [u8; 1024],
     food_quantities: [u8; 1024],
 }
@@ -16,7 +15,6 @@ struct ClientState {
     map_area: u64,
     no_of_chunks: u32,
     chunks_per_player: u16,
-    last_tick_time: f64,
     chunks: HashMap<u32, ClientChunk>,
     render_buffer: Vec<f32>,
 }
@@ -28,7 +26,6 @@ impl Default for ClientState {
             map_area: 0,
             no_of_chunks: 0,
             chunks_per_player: 0,
-            last_tick_time: 0.0,
             chunks: HashMap::new(),
             render_buffer: Vec::new(),
         }
@@ -93,7 +90,6 @@ impl GameClient {
 
                                     let client_chunk = ClientChunk {
                                         ant_bitboards: snapshot.ant_bitboards,
-                                        prev_ant_bitboards: snapshot.ant_bitboards,
                                         pheromone_strengths: snapshot.pheromone_strengths,
                                         food_quantities,
                                     };
@@ -112,7 +108,6 @@ impl GameClient {
 
                                 let client_chunk = ClientChunk {
                                     ant_bitboards: snapshot.ant_bitboards,
-                                    prev_ant_bitboards: snapshot.ant_bitboards,
                                     pheromone_strengths: snapshot.pheromone_strengths,
                                     food_quantities,
                                 };
@@ -125,23 +120,21 @@ impl GameClient {
                                 if let Some(client_chunk) =
                                     mutable_state.chunks.get_mut(&delta.chunk_idx)
                                 {
-                                    client_chunk.prev_ant_bitboards = client_chunk.ant_bitboards;
                                     client_chunk.ant_bitboards = delta.ant_bitboards;
 
                                     let evaporate = 1;
 
-                                    for i in 0..1024 {
-                                        let board_idx = i >> 6;
-                                        let bit_idx = i & 63;
-                                        let mut field = delta.pheromone_bitboards[board_idx];
-                                        field >>= bit_idx;
-                                        field &= 1;
-                                        client_chunk.pheromone_strengths[i] = client_chunk
-                                            .pheromone_strengths[i]
-                                            .saturating_add(10 * field as u8);
-                                        client_chunk.pheromone_strengths[i] = client_chunk
-                                            .pheromone_strengths[i]
-                                            .saturating_sub(evaporate);
+                                    for strength in client_chunk.pheromone_strengths.iter_mut() {
+                                        *strength = strength.saturating_sub(evaporate);
+                                    }
+
+                                    for (board_idx, mut board) in delta.pheromone_bitboards.into_iter().enumerate() {
+                                        while board != 0 {
+                                            let bit_idx = board.trailing_zeros();
+                                            let i = (board_idx << 6) + bit_idx as usize;
+                                            client_chunk.pheromone_strengths[i] = client_chunk.pheromone_strengths[i].saturating_add(10);
+                                            board &= board - 1;
+                                        }
                                     }
 
                                     for (idx, quantity) in delta.dirty_food {
@@ -292,15 +285,6 @@ impl GameClient {
             }
         }
 
-        let now = js_sys::Date::now();
-        let mut progress = (now - state.last_tick_time) / 100.0; // 100ms per tick
-        if progress > 1.0 {
-            progress = 1.0;
-        }
-        if progress < 0.0 {
-            progress = 0.0;
-        }
-
         let total_nests = state.no_of_chunks / (state.chunks_per_player as u32);
 
         for nest_id in 0..total_nests {
@@ -343,28 +327,14 @@ impl GameClient {
                     let chunk_pixel_y = (row as f32) * 1024.0;
 
                     for local_idx in 0..1024 {
-                        let board_idx = local_idx >> 6;
-                        let bit_idx = local_idx & 63;
-                        let mut ant = chunk.ant_bitboards[board_idx];
-                        ant >>= bit_idx;
-                        ant &= 1;
-
                         let pheromone_strength = chunk.pheromone_strengths[local_idx];
                         let food_quantity = chunk.food_quantities[local_idx];
 
-                        let local_col = (local_idx % 32) as f32;
-                        let local_row = (local_idx / 32) as f32;
-
-                        let abs_x = chunk_pixel_x + (local_col * 32.0);
-                        let abs_y = chunk_pixel_y + (local_row * 32.0);
-
-                        if food_quantity > 0 {
-                            let color = pack_color(255, 0, 0, food_quantity as u32); // Red
-
-                            state.render_buffer.push(abs_x);
-                            state.render_buffer.push(abs_y);
-                            state.render_buffer.push(color);
-                        } else if pheromone_strength > 0 {
+                        if pheromone_strength > 0 {
+                            let local_col = (local_idx % 32) as f32;
+                            let local_row = (local_idx / 32) as f32;
+                            let abs_x = chunk_pixel_x + (local_col * 32.0);
+                            let abs_y = chunk_pixel_y + (local_row * 32.0);
                             let color = pack_color(0, 255, 255, pheromone_strength as u32); // Cyan
 
                             state.render_buffer.push(abs_x);
@@ -372,51 +342,37 @@ impl GameClient {
                             state.render_buffer.push(color);
                         }
 
-                        if ant == 1 {
-                            let mut prev_col = local_col;
-                            let mut prev_row = local_row;
+                        if food_quantity > 0 {
+                            let local_col = (local_idx % 32) as f32;
+                            let local_row = (local_idx / 32) as f32;
+                            let abs_x = chunk_pixel_x + (local_col * 32.0);
+                            let abs_y = chunk_pixel_y + (local_row * 32.0);
+                            let color = pack_color(0, 255, 0, food_quantity as u32); // Green
 
-                            if progress < 1.0 {
-                                let mut found = false;
-                                for dr in -1..=1 {
-                                    for dc in -1..=1 {
-                                        if dr == 0 && dc == 0 {
-                                            continue;
-                                        }
-                                        let nr = local_row as i32 + dr;
-                                        let nc = local_col as i32 + dc;
-                                        if nr >= 0 && nr < 32 && nc >= 0 && nc < 32 {
-                                            let n_idx = (nr * 32 + nc) as usize;
-                                            let n_board_idx = n_idx >> 6;
-                                            let n_bit_idx = n_idx & 63;
-                                            if (chunk.prev_ant_bitboards[n_board_idx] >> n_bit_idx)
-                                                & 1
-                                                == 1
-                                            {
-                                                prev_col = nc as f32;
-                                                prev_row = nr as f32;
-                                                found = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    if found {
-                                        break;
-                                    }
-                                }
-                            }
+                            state.render_buffer.push(abs_x);
+                            state.render_buffer.push(abs_y);
+                            state.render_buffer.push(color);
+                        }
+                    }
 
-                            let interp_col = prev_col + (local_col - prev_col) * progress as f32;
-                            let interp_row = prev_row + (local_row - prev_row) * progress as f32;
+                    for (board_idx, mut board) in chunk.ant_bitboards.into_iter().enumerate() {
+                        while board != 0 {
+                            let bit_idx = board.trailing_zeros();
+                            let local_idx = (board_idx << 6) + bit_idx as usize;
 
-                            let ant_abs_x = chunk_pixel_x + (interp_col * 32.0);
-                            let ant_abs_y = chunk_pixel_y + (interp_row * 32.0);
+                            let local_col = (local_idx % 32) as f32;
+                            let local_row = (local_idx / 32) as f32;
+
+                            let ant_abs_x = chunk_pixel_x + (local_col * 32.0);
+                            let ant_abs_y = chunk_pixel_y + (local_row * 32.0);
 
                             let color = pack_color(0, 0, 0, 255); // Black
 
                             state.render_buffer.push(ant_abs_x);
                             state.render_buffer.push(ant_abs_y);
                             state.render_buffer.push(color);
+
+                            board &= board - 1;
                         }
                     }
                 }
