@@ -308,13 +308,9 @@ impl GameClient {
                     pack_color(80, 80, 80, 255) // Dark Gray for enemy nests
                 };
 
-                for dy in -1..=1 {
-                    for dx in -1..=1 {
-                        state.render_buffer.push(abs_x + (dx as f32 * 32.0));
-                        state.render_buffer.push(abs_y + (dy as f32 * 32.0));
-                        state.render_buffer.push(color);
-                    }
-                }
+                state.render_buffer.push(abs_x);
+                state.render_buffer.push(abs_y);
+                state.render_buffer.push(color);
             }
         }
 

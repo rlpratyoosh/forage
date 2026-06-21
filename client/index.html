@@ -3,45 +3,162 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Countless | Engine MVP</title>
+    <title>Countless | 2D Evolution</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --primary: #4CAF50;
+            --bg-glass: rgba(15, 20, 25, 0.75);
+            --border-glass: rgba(255, 255, 255, 0.1);
+        }
+
         body, html { 
             margin: 0; padding: 0; width: 100%; height: 100%; 
-            background-color: #0a0a0a; overflow: hidden; 
-            font-family: 'Courier New', Courier, monospace; color: #fff; 
+            background-color: #0f172a; overflow: hidden; 
+            font-family: 'Outfit', sans-serif; color: #fff; 
         }
-        #gameCanvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
+        #gameCanvas { 
+            display: block; width: 100vw; height: 100vh; 
+            /* Antialiasing is fine for smooth shapes */
+        }
 
         #ui-layer { 
             position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
             pointer-events: none; display: flex; flex-direction: column; 
-            justify-content: space-between; padding: 20px; box-sizing: border-box; 
+            justify-content: space-between; padding: 30px; box-sizing: border-box; 
         }
-        .hud-text { font-size: 14px; color: #555; text-shadow: 1px 1px 0 #000; letter-spacing: 1px; }
-        .hud-status { color: #4CAF50; font-weight: bold; }
+
+        .glass-panel {
+            background: var(--bg-glass);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border-glass);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            pointer-events: auto;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            pointer-events: none;
+        }
+
+        .hud-title { 
+            font-size: 24px; font-weight: 700; letter-spacing: 2px;
+            background: linear-gradient(135deg, #4CAF50, #2E7D32);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 5px;
+        }
+        
+        .hud-status { 
+            font-size: 14px; color: #aaa; font-weight: 300; letter-spacing: 1px;
+            display: flex; align-items: center; gap: 8px;
+        }
+
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #ff3333;
+            box-shadow: 0 0 8px #ff3333;
+            transition: background 0.3s, box-shadow 0.3s;
+        }
+
+        .status-dot.connected {
+            background: #4CAF50;
+            box-shadow: 0 0 8px #4CAF50;
+        }
+
+        .control-panel {
+            width: 260px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .panel-title {
+            font-size: 13px; color: #888; font-weight: 700; letter-spacing: 1.5px;
+            text-transform: uppercase;
+        }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px; width: 16px; border-radius: 50%;
+            background: var(--primary);
+            cursor: pointer; margin-top: -6px;
+            box-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer;
+            background: rgba(255, 255, 255, 0.1); border-radius: 2px;
+        }
+
+        .flex-row { display: flex; justify-content: space-between; align-items: center; }
+        .val-badge { background: rgba(76, 175, 80, 0.2); color: #4CAF50; padding: 4px 8px; border-radius: 4px; font-weight: 700; font-size: 14px;}
+
+        button {
+            width: 100%; padding: 12px; background: var(--primary);
+            border: none; border-radius: 6px; color: #fff; cursor: pointer;
+            font-family: 'Outfit', sans-serif; font-weight: 700; letter-spacing: 1px;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            text-transform: uppercase;
+        }
+        button:hover {
+            background: #45a049; transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.4);
+        }
+        button:active { transform: translateY(0); }
+
+        .hint { font-size: 11px; color: #666; text-align: center; margin-top: 5px; font-weight: 500;}
 
         #loading { 
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
-            font-size: 18px; letter-spacing: 4px; color: #4CAF50; 
-            text-shadow: 0 0 10px rgba(76, 175, 80, 0.3); transition: opacity 0.5s ease; 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #0f172a; display: flex; justify-content: center; align-items: center;
+            font-size: 20px; font-weight: 300; letter-spacing: 6px; color: #4CAF50; 
+            z-index: 100; transition: opacity 0.8s ease, visibility 0.8s;
         }
+        
+        .pulse { animation: pulsate 1.5s infinite alternate; }
+        @keyframes pulsate { from { opacity: 0.4; } to { opacity: 1; text-shadow: 0 0 15px rgba(76, 175, 80, 0.5); } }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
 
     <div id="ui-layer">
-        <div class="hud-text">COUNTLESS ENGINE // V0.1</div>
-        <div class="hud-text">STATUS: <span class="hud-status" id="status">BOOTING WASM...</span></div>
-        <div style="margin-top: 20px; background: rgba(0,0,0,0.7); padding: 15px; border: 1px solid #444; width: 200px; border-radius: 4px; pointer-events: auto;">
-            <div class="hud-text" style="margin-bottom: 10px; color: #4CAF50; font-weight: bold;">SPAWN FOOD</div>
-            <input type="range" id="foodAmount" min="2" max="254" step="2" value="100" style="width: 100%; cursor: pointer;">
-            <div class="hud-text" style="margin-top: 5px; margin-bottom: 10px;">AMOUNT: <span id="foodAmountLabel" style="color: #fff;">100</span></div>
-            <button id="spawnBtn" style="width: 100%; padding: 8px; background: #4CAF50; border: none; border-radius: 2px; color: #111; cursor: pointer; font-family: inherit; font-weight: bold; letter-spacing: 1px; transition: background 0.2s;">SPAWN AT CENTER</button>
-            <div class="hud-text" style="font-size: 10px; margin-top: 8px; color: #888; text-align: center;">OR RIGHT-CLICK ON MAP</div>
+        <div class="header">
+            <div class="glass-panel" style="pointer-events: none;">
+                <div class="hud-title">FORAGE</div>
+                <div class="hud-status">
+                    <div class="status-dot" id="status-dot"></div>
+                    <span id="status-text">INITIALIZING ENGINE...</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="glass-panel control-panel">
+            <div class="panel-title">Ecosystem Controls</div>
+            
+            <div>
+                <div class="flex-row" style="margin-bottom: 10px;">
+                    <span style="font-size: 13px; color: #aaa;">Food Drop Yield</span>
+                    <span class="val-badge" id="foodAmountLabel">100</span>
+                </div>
+                <input type="range" id="foodAmount" min="2" max="254" step="2" value="100">
+            </div>
+
+            <div class="hint" style="margin-top: 10px;">Right-click anywhere on the map to spawn food</div>
         </div>
     </div>
-    <div id="loading">ESTABLISHING NEST LINK...</div>
+    
+    <div id="loading"><span class="pulse">SYNTHESIZING WORLD...</span></div>
 
     <script type="module">
         import init, { GameClient } from './pkg/forage_client.js';
@@ -50,11 +167,15 @@
             try {
                 const wasm = await init();
 
-                document.getElementById('loading').style.opacity = '0';
-                document.getElementById('status').innerText = 'CONNECTED';
+                const loader = document.getElementById('loading');
+                loader.style.opacity = '0';
+                setTimeout(() => loader.style.visibility = 'hidden', 800);
+
+                document.getElementById('status-text').innerText = 'LINK ESTABLISHED';
+                document.getElementById('status-dot').classList.add('connected');
 
                 const canvas = document.getElementById('gameCanvas');
-                const ctx = canvas.getContext('2d', { alpha: false }); // Optimize hardware pass
+                const ctx = canvas.getContext('2d', { alpha: false }); 
 
                 function resize() {
                     canvas.width = window.innerWidth;
@@ -63,7 +184,6 @@
                 window.addEventListener('resize', resize);
                 resize();
 
-                // Connect back to the Axum WebSocket we are being served from
                 const wsUrl = `ws://${window.location.host}/join`;
                 const client = new GameClient(wsUrl);
 
@@ -77,19 +197,9 @@
 
                 const foodSlider = document.getElementById('foodAmount');
                 const foodLabel = document.getElementById('foodAmountLabel');
-                const spawnBtn = document.getElementById('spawnBtn');
 
                 foodSlider.addEventListener('input', (e) => {
                     foodLabel.innerText = e.target.value;
-                });
-
-                spawnBtn.addEventListener('click', () => {
-                    if (camX !== null && camY !== null) {
-                        const amount = parseInt(foodSlider.value, 10);
-                        const centerX = camX + (canvas.width / 2) / zoom;
-                        const centerY = camY + (canvas.height / 2) / zoom;
-                        client.spawn_food(centerX, centerY, amount);
-                    }
                 });
 
                 window.addEventListener('contextmenu', e => {
@@ -110,7 +220,7 @@
                     } else {
                         zoom /= zoomFactor;
                     }
-                    zoom = Math.max(0.1, Math.min(zoom, 10.0));
+                    zoom = Math.max(0.05, Math.min(zoom, 15.0));
 
                     const centerX = canvas.width / 2;
                     const centerY = canvas.height / 2;
@@ -132,7 +242,7 @@
                         return;
                     }
 
-                    const speed = 12.0 / zoom;
+                    const speed = 15.0 / zoom;
                     if (keys['ArrowUp'] || keys['w']) camY -= speed;
                     if (keys['ArrowDown'] || keys['s']) camY += speed;
                     if (keys['ArrowLeft'] || keys['a']) camX -= speed;
@@ -142,14 +252,36 @@
                     const viewportHeight = canvas.height / zoom;
                     client.update_render_state(camX, camY, viewportWidth, viewportHeight);
 
-                    ctx.fillStyle = '#1e1814';
+                    // Draw Water Background
+                    ctx.fillStyle = '#0f1f38'; 
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
                     ctx.save();
                     ctx.scale(zoom, zoom);
                     ctx.translate(-camX, -camY);
 
-                    const pointer = client.get_buffer_pointer() / 4; // Divide by 4 to get f32/u32 index
+                    let mapSize = client.get_map_width_pixels();
+                    
+                    // Draw Land Mass
+                    ctx.fillStyle = '#2c3e2e'; // Lush dark green land
+                    ctx.fillRect(0, 0, mapSize, mapSize);
+                    
+                    // Draw Shoreline Sand Border
+                    ctx.strokeStyle = '#c2b280';
+                    ctx.lineWidth = 12;
+                    ctx.strokeRect(0, 0, mapSize, mapSize);
+
+                    // Grid lines for scale (subtle)
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.02)';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    for(let i=0; i<mapSize; i+=256) {
+                        ctx.moveTo(i, 0); ctx.lineTo(i, mapSize);
+                        ctx.moveTo(0, i); ctx.lineTo(mapSize, i);
+                    }
+                    ctx.stroke();
+
+                    const pointer = client.get_buffer_pointer() / 4; 
                     const length = client.get_buffer_length();
 
                     const f32View = new Float32Array(wasm.memory.buffer);
@@ -160,26 +292,68 @@
                         let y = f32View[pointer + i + 1];
                         let colorInt = u32View[pointer + i + 2];
 
-                        // Unpack the 32-bit color
                         let r = (colorInt >>> 24) & 255;
                         let g = (colorInt >>> 16) & 255;
                         let b = (colorInt >>> 8) & 255;
                         let a = (colorInt & 255) / 255.0;
 
-                        ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
-
                         if (r === 0 && g === 0 && b === 0 && a === 1.0) {
-                            // Small square for ant
-                            ctx.fillRect(x + 12, y + 12, 8, 8);
+                            // Ant: sleek capsule/dot shape
+                            ctx.fillStyle = '#111';
+                            ctx.beginPath();
+                            ctx.ellipse(x + 16, y + 16, 6, 4, 0, 0, Math.PI * 2);
+                            ctx.fill();
+                        } else if (r === 0 && g === 255 && b === 255) {
+                            // Pheromone: soft cyan glow, large radius for continuous path
+                            ctx.fillStyle = `rgba(0, 220, 255, ${a * 0.5})`;
+                            ctx.beginPath();
+                            ctx.arc(x + 16, y + 16, 24, 0, Math.PI * 2);
+                            ctx.fill();
+                        } else if (r === 0 && g === 255 && b === 0) {
+                            // Food: organic green pellet, scattered and much larger
+                            let fx = x + 16 + Math.sin(x * 0.13 + y * 0.07) * 12;
+                            let fy = y + 16 + Math.cos(y * 0.11 + x * 0.09) * 12;
+
+                            ctx.fillStyle = '#4CAF50';
+                            ctx.strokeStyle = '#2E7D32';
+                            ctx.lineWidth = 2;
+                            let radius = 12 + (a * 16); // Scale up size significantly
+                            ctx.beginPath();
+                            ctx.arc(fx, fy, radius, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.stroke();
+                        } else if (r === 255 && g === 215 && b === 0) {
+                            // Own Nest: Golden Crater
+                            ctx.fillStyle = '#4a332a';
+                            ctx.beginPath();
+                            ctx.arc(x + 16, y + 16, 64, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.fillStyle = '#2a1a14';
+                            ctx.beginPath();
+                            ctx.arc(x + 16, y + 16, 24, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.strokeStyle = 'rgba(255, 215, 0, 0.9)';
+                            ctx.lineWidth = 4;
+                            ctx.stroke();
+                        } else if (r === 80 && g === 80 && b === 80) {
+                            // Enemy Nest: Red Crater
+                            ctx.fillStyle = '#4a332a';
+                            ctx.beginPath();
+                            ctx.arc(x + 16, y + 16, 64, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.fillStyle = '#2a1a14';
+                            ctx.beginPath();
+                            ctx.arc(x + 16, y + 16, 24, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.strokeStyle = 'rgba(255, 50, 50, 0.8)';
+                            ctx.lineWidth = 4;
+                            ctx.stroke();
                         } else {
+                            // Fallback
+                            ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
                             ctx.fillRect(x, y, 32, 32); 
                         }
                     }
-
-                    let mapSize = client.get_map_width_pixels();
-                    ctx.strokeStyle = 'rgba(255, 50, 50, 0.8)'; // Neon Red
-                    ctx.lineWidth = 10;
-                    ctx.strokeRect(0, 0, mapSize, mapSize);
 
                     ctx.restore();
                     requestAnimationFrame(loop);
@@ -189,9 +363,10 @@
 
             } catch (error) {
                 console.error("WASM Boot Failure:", error);
-                document.getElementById('status').innerText = 'CRITICAL FAILURE';
-                document.getElementById('status').style.color = '#ff3333';
-                document.getElementById('loading').innerText = 'WASM MODULE NOT FOUND';
+                document.getElementById('status-text').innerText = 'CRITICAL FAILURE';
+                document.getElementById('status-text').style.color = '#ff3333';
+                document.getElementById('status-dot').style.background = '#ff3333';
+                document.getElementById('loading').innerHTML = 'WASM MODULE NOT FOUND';
                 document.getElementById('loading').style.color = '#ff3333';
             }
         }
