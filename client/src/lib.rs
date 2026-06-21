@@ -128,7 +128,7 @@ impl GameClient {
                                     client_chunk.prev_ant_bitboards = client_chunk.ant_bitboards;
                                     client_chunk.ant_bitboards = delta.ant_bitboards;
 
-                                let evaporate = 1;
+                                    let evaporate = 1;
 
                                     for i in 0..1024 {
                                         let board_idx = i >> 6;
@@ -294,8 +294,12 @@ impl GameClient {
 
         let now = js_sys::Date::now();
         let mut progress = (now - state.last_tick_time) / 100.0; // 100ms per tick
-        if progress > 1.0 { progress = 1.0; }
-        if progress < 0.0 { progress = 0.0; }
+        if progress > 1.0 {
+            progress = 1.0;
+        }
+        if progress < 0.0 {
+            progress = 0.0;
+        }
 
         let total_nests = state.no_of_chunks / (state.chunks_per_player as u32);
 
@@ -376,14 +380,19 @@ impl GameClient {
                                 let mut found = false;
                                 for dr in -1..=1 {
                                     for dc in -1..=1 {
-                                        if dr == 0 && dc == 0 { continue; }
+                                        if dr == 0 && dc == 0 {
+                                            continue;
+                                        }
                                         let nr = local_row as i32 + dr;
                                         let nc = local_col as i32 + dc;
                                         if nr >= 0 && nr < 32 && nc >= 0 && nc < 32 {
                                             let n_idx = (nr * 32 + nc) as usize;
                                             let n_board_idx = n_idx >> 6;
                                             let n_bit_idx = n_idx & 63;
-                                            if (chunk.prev_ant_bitboards[n_board_idx] >> n_bit_idx) & 1 == 1 {
+                                            if (chunk.prev_ant_bitboards[n_board_idx] >> n_bit_idx)
+                                                & 1
+                                                == 1
+                                            {
                                                 prev_col = nc as f32;
                                                 prev_row = nr as f32;
                                                 found = true;
@@ -391,7 +400,9 @@ impl GameClient {
                                             }
                                         }
                                     }
-                                    if found { break; }
+                                    if found {
+                                        break;
+                                    }
                                 }
                             }
 
