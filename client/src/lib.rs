@@ -128,11 +128,15 @@ impl GameClient {
                                         *strength = strength.saturating_sub(evaporate);
                                     }
 
-                                    for (board_idx, mut board) in delta.pheromone_bitboards.into_iter().enumerate() {
+                                    for (board_idx, mut board) in
+                                        delta.pheromone_bitboards.into_iter().enumerate()
+                                    {
                                         while board != 0 {
                                             let bit_idx = board.trailing_zeros();
                                             let i = (board_idx << 6) + bit_idx as usize;
-                                            client_chunk.pheromone_strengths[i] = client_chunk.pheromone_strengths[i].saturating_add(10);
+                                            client_chunk.pheromone_strengths[i] = client_chunk
+                                                .pheromone_strengths[i]
+                                                .saturating_add(10);
                                             board &= board - 1;
                                         }
                                     }
