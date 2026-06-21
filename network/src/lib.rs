@@ -16,6 +16,7 @@ pub enum ServerPacket {
 #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
 pub struct ChunkSnapshot {
     pub chunk_idx: u32,
+    pub tick_count: u64,
     pub ant_bitboards: [u64; 16],
     pub pheromone_strengths: [u8; 1024],
     pub food_quantities: Vec<(u16, u8)>,
@@ -24,6 +25,7 @@ pub struct ChunkSnapshot {
 #[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Clone)]
 pub struct ChunkDelta {
     pub chunk_idx: u32,
+    pub tick_count: u64,
     pub ant_bitboards: [u64; 16],
     pub pheromone_bitboards: [u64; 16],
     pub dirty_food: Vec<(u16, u8)>,
@@ -66,12 +68,14 @@ mod tests {
             snapshots: vec![
                 ChunkSnapshot {
                     chunk_idx: 0,
+                    tick_count: 0,
                     ant_bitboards: [0; 16],
                     pheromone_strengths: [0; 1024],
                     food_quantities: vec![(0, 10), (1, 20)],
                 },
                 ChunkSnapshot {
                     chunk_idx: 1,
+                    tick_count: 0,
                     ant_bitboards: [0; 16],
                     pheromone_strengths: [0; 1024],
                     food_quantities: vec![(2, 30)],
@@ -92,6 +96,7 @@ mod tests {
     fn server_snapshot_packet() {
         let packet = ServerPacket::Snapshot(ChunkSnapshot {
             chunk_idx: 0,
+            tick_count: 0,
             ant_bitboards: [0; 16],
             pheromone_strengths: [0; 1024],
             food_quantities: vec![(0, 10), (1, 20)],
@@ -110,6 +115,7 @@ mod tests {
     fn server_delta_packet() {
         let packet = ServerPacket::Delta(ChunkDelta {
             chunk_idx: 0,
+            tick_count: 0,
             ant_bitboards: [0; 16],
             pheromone_bitboards: [0; 16],
             dirty_food: vec![(0, 10), (1, 20)],

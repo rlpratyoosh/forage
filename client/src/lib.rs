@@ -19,6 +19,7 @@ struct ClientState {
     chunks: HashMap<u32, ClientChunk>,
     render_buffer: Vec<f32>,
     last_tick_time: f64,
+    tick_count: u64,
 }
 
 impl Default for ClientState {
@@ -31,6 +32,7 @@ impl Default for ClientState {
             chunks: HashMap::new(),
             render_buffer: Vec::new(),
             last_tick_time: 0.0,
+            tick_count: 0,
         }
     }
 }
@@ -115,6 +117,7 @@ impl GameClient {
                             }
 
                             ServerPacket::Snapshot(snapshot) => {
+                                mutable_state.tick_count = snapshot.tick_count;
                                 let mut food_quantities = [0u8; 1024];
 
                                 for (idx, quantity) in snapshot.food_quantities {
@@ -144,6 +147,7 @@ impl GameClient {
                             }
 
                             ServerPacket::Delta(delta) => {
+                                mutable_state.tick_count = delta.tick_count;
                                 if let Some(client_chunk) =
                                     mutable_state.chunks.get_mut(&delta.chunk_idx)
                                 {
@@ -471,8 +475,17 @@ impl GameClient {
                         let interp_col = prev_col + (local_col - prev_col) * progress as f32;
                         let interp_row = prev_row + (local_row - prev_row) * progress as f32;
 
-                        let ant_abs_x = chunk_pixel_x + (interp_col * 32.0);
-                        let ant_abs_y = chunk_pixel_y + (interp_row * 32.0);
+                        let moving = old_idx != new_idx;
+                        let wiggle = if moving {
+                            ((state.tick_count as f32 + progress as f32) * std::f32::consts::PI)
+                                .sin()
+                                * 2.0
+                        } else {
+                            0.0
+                        };
+
+                        let ant_abs_x = chunk_pixel_x + (interp_col * 32.0) + wiggle;
+                        let ant_abs_y = chunk_pixel_y + (interp_row * 32.0) - wiggle.abs();
 
                         let color = pack_color(0, 0, 0, 255); // Black
 
