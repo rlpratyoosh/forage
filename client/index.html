@@ -154,7 +154,8 @@
                 <input type="range" id="foodAmount" min="2" max="254" step="2" value="100">
             </div>
 
-            <div class="hint" style="margin-top: 10px;">Right-click anywhere on the map to spawn food</div>
+            <div class="hint" style="margin-top: 10px; margin-bottom: 5px;">Right-click anywhere on the map to spawn food</div>
+            <button id="homeBtn" style="background: #2196F3;">Go Back to Nest</button>
         </div>
     </div>
     
@@ -197,6 +198,14 @@
 
                 const foodSlider = document.getElementById('foodAmount');
                 const foodLabel = document.getElementById('foodAmountLabel');
+                const homeBtn = document.getElementById('homeBtn');
+
+                homeBtn.addEventListener('click', () => {
+                    if (client.is_ready()) {
+                        camX = client.get_initial_cam_x() - (canvas.width / 2) / zoom;
+                        camY = client.get_initial_cam_y() - (canvas.height / 2) / zoom;
+                    }
+                });
 
                 foodSlider.addEventListener('input', (e) => {
                     foodLabel.innerText = e.target.value;
