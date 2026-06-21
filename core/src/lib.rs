@@ -382,7 +382,7 @@ impl World {
                 }
 
                 chosen_pos = neighbors[0];
-                let k = random_generator.u16(0..=total_weight);
+                let k = random_generator.u16(1..=total_weight);
                 let mut cur = 0u16;
                 for j in 0..valid_count {
                     cur += weights[j];
