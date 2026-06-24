@@ -188,22 +188,27 @@ impl Settings {
         }
     }
 
+    /// Returns the calculated map_area
     pub fn get_map_area(&self) -> usize {
         self.map_area
     }
 
+    /// Returns the calculated player_count
     pub fn get_player_count(&self) -> u32 {
         self.player_count
     }
 
+    /// Returns ants_per_nest (Remains same as given in parameter)
     pub fn get_ants_per_nest(&self) -> u32 {
         self.ants_per_nest
     }
 
+    /// Returns calculated no_of_chunks
     pub fn get_no_of_chunks(&self) -> u32 {
         self.no_of_chunks
     }
 
+    /// Returns calculated chunks_per_player
     pub fn get_chunks_per_player(&self) -> u16 {
         self.chunks_per_player
     }

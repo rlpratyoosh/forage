@@ -10,18 +10,20 @@ use axum::{
 };
 use forage_core::{Settings, World};
 use forage_network::{ChunkSnapshot, ClientPacket, Error as NetError, ServerPacket};
-use forage_server::{info, error};
+use forage_server::{error, info};
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::{StreamMap, wrappers::BroadcastStream};
 use tower_http::services::ServeDir;
 
+// TODO: Send all constants to a .env file
 const PLAYER_COUNT: usize = 1000;
 const ANTS_PER_PLAYER: u32 = 500;
 const ANT_DENSITY: f32 = 0.05;
 const TICKS_PER_SECOND: u8 = 10;
 
+// Oneshot is used to fire and forget (No need of persistent connection)
 enum EngineCommand {
     AddPlayer(oneshot::Sender<Result<u32, NetError>>),
     RemovePlayer(u32),
@@ -36,12 +38,15 @@ enum EngineCommand {
 
 struct ServerState {
     engine_tx: mpsc::Sender<EngineCommand>,
+    // Broadcast sender so interested clients can subscribe (to recieve deltas)
     chunk_broadcasts: Vec<broadcast::Sender<Bytes>>,
+    // Store map info to send back to clients when they join
     map_area: u64,
     no_of_chunks: u32,
     chunks_per_player: u16,
 }
 
+// Defined to be passed easily in client message handler functions
 type WsSender = futures_util::stream::SplitSink<WebSocket, Message>;
 
 #[tokio::main]
@@ -90,10 +95,11 @@ async fn main() {
     let server = Router::new()
         .route("/health", routing::get("Online!"))
         .route("/join", routing::any(join_handler))
-        .fallback_service(ServeDir::new("client"))
-        .with_state(server_state); 
+        .fallback_service(ServeDir::new("client")) // On `/` serve the client/ directory (It contains index.html that nobody talks about)
+        .with_state(server_state);
     info!("🟢 Server listening on port 8080\n🌐 Visit http://localhost::8080/\n");
 
+    // Never returns an error, but unwrap looks bad ;-;
     if axum::serve(listener, server).await.is_err() {
         error!("❗ Server error!");
     }
@@ -134,7 +140,7 @@ async fn handle_connection(socket: WebSocket, server_state: Arc<ServerState>) {
     let viewport_capacity = (server_state.chunks_per_player.isqrt() as usize + 1).pow(2);
 
     let mut nest_id: Option<u32> = None;
-    let mut broadcast_receivers = StreamMap::with_capacity(viewport_capacity);
+    let mut broadcast_receivers = StreamMap::with_capacity(viewport_capacity); // A stream of futures, returns the one that completes first, without wasting CPU cycles
     let engine_tx = &server_state.engine_tx;
 
     loop {
@@ -156,6 +162,8 @@ async fn handle_connection(socket: WebSocket, server_state: Arc<ServerState>) {
                             cleanup_player!(nest_id, engine_tx);
                             break;
                         }
+
+                        // Just for logging
                         if let Some(id) = nest_id {
                             info!("🎮 Player joined! Nest id {} assigned!", id);
                         }
@@ -215,7 +223,6 @@ async fn process_join(
         let _ = send_packet!(sender, &NetError::EngineFailure);
         return false;
     };
-
 
     let Ok(id) = res else {
         error!("❗ Server Full!");
@@ -386,7 +393,10 @@ fn run_engine(
     let mut world = World::new(settings);
     let millis_per_tick = 1000 / TICKS_PER_SECOND as u64;
     let duration_per_tick = std::time::Duration::from_millis(millis_per_tick);
-    info!("🌍 World started rotating at {} ticks/sec", TICKS_PER_SECOND);
+    info!(
+        "🌍 World started rotating at {} ticks/sec",
+        TICKS_PER_SECOND
+    );
 
     loop {
         let start = std::time::Instant::now();
@@ -424,6 +434,7 @@ fn run_engine(
             let broadcast = &chunk_broadcasts_engine[i];
             if broadcast.receiver_count() > 0 {
                 if let Ok(delta) = world.get_delta(i as u32) {
+                    // Serialize early, so all clients wouldn't have to serialize same thing individually
                     if let Ok(bytes) = wincode::serialize(&ServerPacket::Delta(delta)) {
                         let _ = broadcast.send(Bytes::from(bytes));
                     }

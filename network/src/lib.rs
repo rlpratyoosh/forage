@@ -1,5 +1,10 @@
 use wincode::{SchemaRead, SchemaWrite};
 
+/// Defines the structure of packets being transmitted by server to the client
+///
+/// 1. Welcome: Welcome packet containing necessary initialization information.
+/// 2. Snapshot: Chunk Snapshots, recieved after subscribing to a chunk.
+/// 3. Delta: Chunk Deltas, recieved on every tick for every subscribed chunk.
 #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
 pub enum ServerPacket {
     Welcome {
@@ -13,6 +18,10 @@ pub enum ServerPacket {
     Delta(ChunkDelta),
 }
 
+/// Defines the Chunk Snapshot structure
+///
+/// - It is supposed to be sent when a client subscribes a chunk.
+/// - Contains information about every entity that the chunk contains at that point of time, which the client can store and apply deltas to.
 #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
 pub struct ChunkSnapshot {
     pub chunk_idx: u32,
@@ -22,6 +31,10 @@ pub struct ChunkSnapshot {
     pub food_quantities: Vec<(u16, u8)>,
 }
 
+/// Defines Chunk Delta structure
+///
+/// - It is sent to the subscribed clients every tick.
+/// - It contains the changes made to the state of entities that tick.
 #[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Clone)]
 pub struct ChunkDelta {
     pub chunk_idx: u32,
@@ -31,6 +44,12 @@ pub struct ChunkDelta {
     pub dirty_food: Vec<(u16, u8)>,
 }
 
+/// Defines the structure of packets being transmitted by client to the server
+///
+/// 1. Join: Sent when joining the game.
+/// 2. UpdateViewport: Contains a vector of all chunks in the viewport.
+/// 3. SpawnFood: Command to spawn food on the map on given location.
+/// 4. Quit: Sent if client wants to quit.
 #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
 pub enum ClientPacket {
     Join,
@@ -45,6 +64,7 @@ pub enum ClientPacket {
     Quit,
 }
 
+/// Defines all kinds of errors the server can transmit back to the client
 #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
 pub enum Error {
     BadRequest,
