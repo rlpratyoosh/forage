@@ -41,7 +41,7 @@ impl Default for ClientState {
 pub struct GameClient {
     socket: web_sys::WebSocket,
     state: Rc<RefCell<ClientState>>,
-    last_requested_chunks: Vec<u32>,
+    last_requested_chunks: Vec<u32>, // To verify if viewport actually changed before sending to the server
 }
 
 #[wasm_bindgen]
@@ -72,7 +72,7 @@ impl GameClient {
 
                     if let Ok(server_packet) = wincode::deserialize::<ServerPacket>(&raw_bytes) {
                         let mut mutable_state = closure_state.borrow_mut();
-                        let mutable_state = &mut *mutable_state;
+                        let mutable_state = &mut *mutable_state; // Fuck you borrow checker
 
                         match server_packet {
                             ServerPacket::Welcome {
@@ -157,7 +157,7 @@ impl GameClient {
 
                                     let mut transitions = Vec::with_capacity(64);
 
-                                    // Pass 1: Exact matches
+                                    // Remains at the same position
                                     for i in 0..16 {
                                         let mut exact = unmatched_old[i] & unmatched_new[i];
                                         unmatched_old[i] &= !exact;
@@ -170,7 +170,7 @@ impl GameClient {
                                         }
                                     }
 
-                                    // Pass 2: Neighbors
+                                    // Changed position
                                     for i in 0..16 {
                                         let mut new_bits = unmatched_new[i];
                                         while new_bits != 0 {
@@ -391,6 +391,7 @@ impl GameClient {
         }
 
         let now = js_sys::Date::now();
+        // TODO: Ask for ticks per second from the server
         let mut progress = (now - state.last_tick_time) / 100.0; // 100ms per tick
         if progress > 1.0 {
             progress = 1.0;
@@ -429,8 +430,9 @@ impl GameClient {
         }
 
         for row in min_row..=max_row {
+            let row_id = row as u32 * map_width_chunks as u32;
             for col in min_col..=max_col {
-                let chunk_idx = (row as u32 * map_width_chunks as u32) + col as u32;
+                let chunk_idx = row_id + col as u32;
 
                 if let Some(chunk) = state.chunks.get(&chunk_idx) {
                     let chunk_pixel_x = (col as f32) * 1024.0;
@@ -472,6 +474,7 @@ impl GameClient {
                         let local_col = (new_idx % 32) as f32;
                         let local_row = (new_idx / 32) as f32;
 
+                        // Linear Interpolation
                         let interp_col = prev_col + (local_col - prev_col) * progress as f32;
                         let interp_row = prev_row + (local_row - prev_row) * progress as f32;
 
