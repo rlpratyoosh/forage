@@ -35,7 +35,7 @@ Since this is the MVP engine build, a few design trade-offs are present:
 
 ## How to Install and Run
 
-Make sure you have [Rust, Cargo](https://rustup.rs/), and [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/) installed on your system.
+Make sure you have [Rust, Cargo](https://rustup.rs/), and [wasm-pack](https://github.com/wasm-bindgen/wasm-pack) installed on your system.
 
 1. Clone the repository:
 ```bash
