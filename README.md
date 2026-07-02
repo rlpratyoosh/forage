@@ -32,6 +32,7 @@ Since this is the MVP engine build, a few design trade-offs are present:
 
 * **Entity Identity Swapping:** Because ant positions are sent as pure bitboards (booleans) rather than tracked UUIDs to save bandwidth, the frontend's nearest-neighbor interpolation algorithm can occasionally cross paths and "swap" ant identities in highly dense crowds.
 * **Ephemeral State:** There is no persistent database integration (e.g., PostgreSQL/DuckDB) yet. The entire world state lives in the server's RAM and resets on server restart.
+* **Viewport Cap:** There is no cap on viewport size yet on the server side, anyone can zoom out get the whole map into the viewport and choke the bandwidth.
 
 ## How to Install and Run
 
